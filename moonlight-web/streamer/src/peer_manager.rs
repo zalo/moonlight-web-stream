@@ -18,7 +18,9 @@ pub struct PeerManager {
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
     pub player_slot: PlayerSlot,
+    #[allow(dead_code)]
     pub video_frame_queue_size: usize,
+    #[allow(dead_code)]
     pub audio_sample_queue_size: usize,
 }
 
@@ -37,6 +39,7 @@ impl PeerManager {
     }
 
     /// Get whether guests can use keyboard/mouse
+    #[allow(dead_code)]
     pub fn guests_keyboard_mouse_enabled(&self) -> bool {
         self.guests_keyboard_mouse_enabled
     }
@@ -70,11 +73,13 @@ impl PeerManager {
     }
 
     /// Get peer info
+    #[allow(dead_code)]
     pub fn get_peer(&self, peer_id: PeerId) -> Option<&PeerInfo> {
         self.peers.get(&peer_id)
     }
 
     /// Get the player slot for a peer
+    #[allow(dead_code)]
     pub fn get_player_slot(&self, peer_id: PeerId) -> Option<PlayerSlot> {
         self.peers.get(&peer_id).map(|info| info.player_slot)
     }
@@ -122,16 +127,19 @@ impl PeerManager {
     }
 
     /// Get all peer IDs
+    #[allow(dead_code)]
     pub fn peer_ids(&self) -> impl Iterator<Item = PeerId> + '_ {
         self.peers.keys().copied()
     }
 
     /// Get the number of connected peers
+    #[allow(dead_code)]
     pub fn peer_count(&self) -> usize {
         self.peers.len()
     }
 
     /// Check if any peers are connected
+    #[allow(dead_code)]
     pub fn has_peers(&self) -> bool {
         !self.peers.is_empty()
     }

@@ -45,7 +45,9 @@ pub struct RoomClient {
     pub player_slot: PlayerSlot,
     pub player_name: Option<String>,
     pub session: Session,
+    #[allow(dead_code)]
     pub video_frame_queue_size: usize,
+    #[allow(dead_code)]
     pub audio_sample_queue_size: usize,
 }
 
@@ -155,6 +157,7 @@ impl Room {
     }
 
     /// Check if the host is still connected
+    #[allow(dead_code)]
     pub fn has_host(&self) -> bool {
         self.clients
             .values()
@@ -162,11 +165,13 @@ impl Room {
     }
 
     /// Get a client by peer ID
+    #[allow(dead_code)]
     pub fn get_client(&self, peer_id: PeerId) -> Option<&RoomClient> {
         self.clients.get(&peer_id)
     }
 
     /// Get a mutable client by peer ID
+    #[allow(dead_code)]
     pub fn get_client_mut(&mut self, peer_id: PeerId) -> Option<&mut RoomClient> {
         self.clients.get_mut(&peer_id)
     }
@@ -257,6 +262,7 @@ impl RoomManager {
     }
 
     /// Get the room a peer belongs to
+    #[allow(dead_code)]
     pub async fn get_peer_room(&self, peer_id: PeerId) -> Option<Arc<Mutex<Room>>> {
         let peer_to_room = self.peer_to_room.read().await;
         if let Some(room_id) = peer_to_room.get(&peer_id) {
