@@ -28,8 +28,8 @@ game_data = modal.Volume.from_name("discord-cloud-gaming-data", create_if_missin
 # Build the container image with all dependencies
 image = (
     modal.Image.from_registry(
-        "nvidia/cuda:12.4.0-runtime-ubuntu22.04",
-        add_python="3.11"
+        "nvidia/cuda:12.8.0-runtime-ubuntu24.04",
+        add_python="3.12"
     )
     # System dependencies
     .apt_install(
@@ -83,7 +83,7 @@ image = (
     .env({"PATH": "/root/.cargo/bin:$PATH"})
     # Install Sunshine from GitHub releases
     .run_commands(
-        "wget -q https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-ubuntu-22.04-amd64.deb -O /tmp/sunshine.deb",
+        "wget -q https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-ubuntu-24.04-amd64.deb -O /tmp/sunshine.deb",
         "apt-get install -y /tmp/sunshine.deb || echo 'Sunshine install attempted'",
         "rm /tmp/sunshine.deb",
     )
