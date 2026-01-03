@@ -59,7 +59,7 @@ pub async fn start_host(
 async fn handle_stream_connection(
     web_app: Data<App>,
     mut user: AuthenticatedUser,
-    mut session: Session,
+    session: Session,
     mut stream: MessageStream,
     client_unique_id: String,
 ) {
@@ -487,7 +487,7 @@ async fn handle_join_room(
     }
 
     // Notify streamer about new peer
-    if let Some(ref ipc_sender) = ipc_sender {
+    if let Some(mut ipc_sender) = ipc_sender.clone() {
         ipc_sender
             .send(ServerIpcMessage::PeerConnected {
                 peer_id,
@@ -512,7 +512,7 @@ async fn handle_client_websocket(
     peer_id: PeerId,
     player_slot: PlayerSlot,
     stream: &mut MessageStream,
-    ipc_sender: common::ipc::IpcSender<ServerIpcMessage>,
+    mut ipc_sender: common::ipc::IpcSender<ServerIpcMessage>,
 ) {
     while let Some(Ok(message)) = stream.recv().await {
         match message {
@@ -581,7 +581,7 @@ async fn handle_client_disconnect(
     room: Arc<Mutex<Room>>,
     peer_id: PeerId,
     player_slot: PlayerSlot,
-    ipc_sender: common::ipc::IpcSender<ServerIpcMessage>,
+    mut ipc_sender: common::ipc::IpcSender<ServerIpcMessage>,
 ) {
     // Remove peer from room manager
     web_app.room_manager().remove_peer(peer_id).await;
@@ -685,7 +685,7 @@ async fn handle_streamer_ipc(
     {
         let room_guard = room.lock().await;
         for client in room_guard.clients.values() {
-            let mut session = client.session.clone();
+            let session = client.session.clone();
             if let Err(err) = session.close(None).await {
                 warn!("Failed to close session for peer {:?}: {:?}", client.peer_id, err);
             }

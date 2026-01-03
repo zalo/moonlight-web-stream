@@ -43,6 +43,7 @@ impl Debug for Host {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AppId(pub u32);
 
+#[derive(Clone)]
 pub struct App {
     pub id: AppId,
     pub title: String,

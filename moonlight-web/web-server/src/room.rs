@@ -9,7 +9,7 @@ use std::{
 use actix_ws::Session;
 use common::{
     api_bindings::{PlayerSlot, RoomInfo, RoomPlayer, StreamServerMessage},
-    ipc::{IpcSender, PeerId, StreamerIpcMessage},
+    ipc::{PeerId, ServerIpcMessage},
     serialize_json,
 };
 use log::{debug, info, warn};
@@ -40,7 +40,6 @@ fn generate_room_id() -> String {
 }
 
 /// Represents a connected player in a room
-#[derive(Debug)]
 pub struct RoomClient {
     pub peer_id: PeerId,
     pub player_slot: PlayerSlot,
@@ -70,7 +69,7 @@ pub struct Room {
     /// Connected clients indexed by peer_id
     pub clients: HashMap<PeerId, RoomClient>,
     /// IPC sender to the streamer process
-    pub ipc_sender: Option<IpcSender<common::ipc::ServerIpcMessage>>,
+    pub ipc_sender: Option<common::ipc::IpcSender<ServerIpcMessage>>,
     /// Track which player slots are occupied
     occupied_slots: [bool; PlayerSlot::MAX_PLAYERS],
     /// Whether guests (non-host players) can use keyboard/mouse
@@ -97,9 +96,9 @@ impl Room {
         self.guests_keyboard_mouse_enabled = enabled;
 
         // Notify the streamer
-        if let Some(ref ipc_sender) = self.ipc_sender {
+        if let Some(mut ipc_sender) = self.ipc_sender.clone() {
             ipc_sender
-                .send(common::ipc::ServerIpcMessage::SetGuestsKeyboardMouseEnabled { enabled })
+                .send(ServerIpcMessage::SetGuestsKeyboardMouseEnabled { enabled })
                 .await;
         }
     }

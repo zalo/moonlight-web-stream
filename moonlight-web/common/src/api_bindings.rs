@@ -379,14 +379,14 @@ pub enum RtcSdpType {
     Unspecified,
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub struct RtcSessionDescription {
     pub ty: RtcSdpType,
     pub sdp: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub struct RtcIceCandidate {
     pub candidate: String,
@@ -395,21 +395,21 @@ pub struct RtcIceCandidate {
     pub username_fragment: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub enum StreamSignalingMessage {
     Description(RtcSessionDescription),
     AddIceCandidate(RtcIceCandidate),
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub enum TransportType {
     WebRTC,
     WebSocket,
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub enum StreamClientMessage {
     /// Initialize a new stream session (creates room as host/Player 1)
@@ -1110,7 +1110,7 @@ ts_consts!(
     pub const CAPABILITY_TRIGGER_RUMBLE: u16 = ControllerCapabilities::TRIGGER_RUMBLE.bits();
 );
 
-#[derive(Serialize, Deserialize, Debug, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub enum StreamColorspace {
     Rec601,
