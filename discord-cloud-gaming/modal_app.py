@@ -110,28 +110,14 @@ image = (
         "cd /app/moonlight-web-stream/moonlight-web/web-server && npm install && npm run build",
         "mkdir -p /app/static && cp -r /app/moonlight-web-stream/moonlight-web/web-server/dist/* /app/static/ || true",
     )
-    # Copy configuration files (copy=True needed for chmod command)
-    .add_local_file(
-        str(Path(__file__).parent / "config" / "xorg.conf"),
-        "/etc/X11/xorg.conf",
-        copy=True
+    # Copy configuration files from the already-copied source tree
+    .run_commands(
+        "cp /app/moonlight-web-stream/discord-cloud-gaming/config/xorg.conf /etc/X11/xorg.conf",
+        "cp /app/moonlight-web-stream/discord-cloud-gaming/config/supervisord.conf /etc/supervisor/conf.d/gaming.conf",
+        "mkdir -p /etc/sunshine && cp /app/moonlight-web-stream/discord-cloud-gaming/config/sunshine.conf /etc/sunshine/sunshine.conf",
+        "cp /app/moonlight-web-stream/discord-cloud-gaming/scripts/start-services.sh /app/start-services.sh",
+        "chmod +x /app/start-services.sh",
     )
-    .add_local_file(
-        str(Path(__file__).parent / "config" / "supervisord.conf"),
-        "/etc/supervisor/conf.d/gaming.conf",
-        copy=True
-    )
-    .add_local_file(
-        str(Path(__file__).parent / "config" / "sunshine.conf"),
-        "/etc/sunshine/sunshine.conf",
-        copy=True
-    )
-    .add_local_file(
-        str(Path(__file__).parent / "scripts" / "start-services.sh"),
-        "/app/start-services.sh",
-        copy=True
-    )
-    .run_commands("chmod +x /app/start-services.sh")
     # Set environment variables
     .env({
         "DISPLAY": ":99",
