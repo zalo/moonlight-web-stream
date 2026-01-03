@@ -5,12 +5,12 @@ import { Component } from "../component/index.js"
 import { Settings } from "../component/settings_menu.js"
 import { AudioPlayer } from "./audio/index.js"
 import { buildAudioPipeline } from "./audio/pipeline.js"
+import { BIG_BUFFER } from "./buffer.js"
 import { defaultStreamInputConfig, StreamInput } from "./input.js"
 import { Logger, LogMessageInfo } from "./log.js"
 import { StreamStats } from "./stats.js"
-import { Transport } from "./transport/index.js"
 import { WebSocketTransport } from "./transport/web_socket.js"
-import { allVideoCodecs, andVideoCodecs, createSupportedVideoFormatsBits, getSelectedVideoCodec, hasAnyCodec, VideoCodecSupport } from "./video.js"
+import { allVideoCodecs, getSelectedVideoCodec, VideoCodecSupport } from "./video.js"
 import { VideoRenderer } from "./video/index.js"
 import { buildVideoPipeline, VideoPipelineOptions } from "./video/pipeline.js"
 import { getStreamerSize, InfoEvent, InfoEventListener } from "./index.js"
@@ -54,7 +54,7 @@ export class GuestStream implements Component {
     private stats: StreamStats
 
     private streamerSize: [number, number]
-    private transport: Transport | null = null
+    private transport: WebSocketTransport | null = null
 
     // Room state
     private roomInfo: RoomInfo | null = null
@@ -208,7 +208,7 @@ export class GuestStream implements Component {
 
         this.sendWsMessage({ SetTransport: "WebSocket" })
 
-        const transport = new WebSocketTransport(this.logger, this.ws)
+        const transport = new WebSocketTransport(this.ws, BIG_BUFFER, this.logger)
         this.transport = transport
 
         this.input.setTransport(transport)
@@ -240,9 +240,9 @@ export class GuestStream implements Component {
             showErrorPopup("Failed to create audio player")
         }
 
-        // Get video channel from transport
-        transport.setupHostVideo({ type: ["data"] })
-        transport.setupHostAudio({ type: ["data"] })
+        // Setup transport channels for video/audio
+        await transport.setupHostVideo({ type: ["data"] })
+        await transport.setupHostAudio({ type: ["data"] })
 
         const videoChannel = transport.getChannel(TransportChannelId.HOST_VIDEO)
         if (videoChannel.type == "data") {
@@ -266,20 +266,9 @@ export class GuestStream implements Component {
             })
         }
 
-        transport.setupChannelListeners()
-
-        // Request connection config
-        const rawFormats = createSupportedVideoFormatsBits(supportedCodecs ?? videoCodecHint)
-        this.sendWsMessage({
-            GetConnectionConfig: {
-                width: this.streamerSize[0],
-                height: this.streamerSize[1],
-                fps: this.settings.fps,
-                supported_video_formats: rawFormats,
-                audio_sample_queue_size: this.settings.audioSampleQueueSize,
-                video_frame_queue_size: this.settings.videoFrameQueueSize,
-            }
-        })
+        // Guests don't send StartStream - they join an existing stream
+        // The server will send ConnectionComplete when ready
+        this.debugLog("Transport ready, waiting for ConnectionComplete from server")
     }
 
     private onWsOpen() {
@@ -290,13 +279,10 @@ export class GuestStream implements Component {
         this.debugLog(`WebSocket closed: ${event.code} ${event.reason}`)
     }
 
-    private onRawWsMessage(event: MessageEvent<Blob | string>) {
-        if (event.data instanceof Blob) {
-            if (this.transport instanceof WebSocketTransport) {
-                event.data.arrayBuffer().then((buffer) => {
-                    this.transport?.onSocketBinaryMessage(buffer)
-                })
-            }
+    private onRawWsMessage(event: MessageEvent) {
+        // Binary messages are handled directly by the WebSocketTransport's channels
+        // We only need to handle JSON messages here
+        if (typeof event.data !== "string") {
             return
         }
 
