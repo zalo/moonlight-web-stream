@@ -8,7 +8,7 @@ jobs:
     strategy:
       matrix:
         arch:
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04
             name: x86_64
           - runner: ubuntu-24.04-arm
             name: aarch64
