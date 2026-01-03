@@ -560,7 +560,7 @@ pub enum GeneralServerMessage {
 #[ts(export, export_to = EXPORT_PATH)]
 pub enum GeneralClientMessage {}
 
-#[derive(Serialize, Deserialize, Debug, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub enum ConnectionStatus {
     Ok,
