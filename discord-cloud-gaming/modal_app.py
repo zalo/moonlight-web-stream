@@ -90,7 +90,7 @@ image = (
         "apt-get install -y sunshine || echo 'Sunshine install attempted'",
     )
     # Copy the moonlight-web-stream source
-    .copy_local_dir(
+    .add_local_dir(
         str(Path(__file__).parent.parent),
         "/app/moonlight-web-stream",
         ignore=[
@@ -112,19 +112,19 @@ image = (
         "mkdir -p /app/static && cp -r /app/moonlight-web-stream/moonlight-web/web-server/dist/* /app/static/ || true",
     )
     # Copy configuration files
-    .copy_local_file(
+    .add_local_file(
         str(Path(__file__).parent / "config" / "xorg.conf"),
         "/etc/X11/xorg.conf"
     )
-    .copy_local_file(
+    .add_local_file(
         str(Path(__file__).parent / "config" / "supervisord.conf"),
         "/etc/supervisor/conf.d/gaming.conf"
     )
-    .copy_local_file(
+    .add_local_file(
         str(Path(__file__).parent / "config" / "sunshine.conf"),
         "/etc/sunshine/sunshine.conf"
     )
-    .copy_local_file(
+    .add_local_file(
         str(Path(__file__).parent / "scripts" / "start-services.sh"),
         "/app/start-services.sh"
     )
@@ -272,9 +272,8 @@ max-bps=0
     timeout=3600 * 4,  # 4 hour max session
     volumes={"/data": game_data},
     secrets=[discord_secret],
-    # Allow concurrent WebRTC connections
-    allow_concurrent_inputs=100,
 )
+@modal.concurrent(max_inputs=100)  # Allow concurrent WebRTC connections
 @modal.web_server(port=8080, startup_timeout=120)
 def cloud_gaming_server():
     """
