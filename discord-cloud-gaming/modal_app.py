@@ -108,7 +108,9 @@ image = (
     # Build the frontend
     .run_commands(
         "cd /app/moonlight-web-stream/moonlight-web/web-server && npm install && npm run build",
-        "mkdir -p /app/static && cp -r /app/moonlight-web-stream/moonlight-web/web-server/dist/* /app/static/ || true",
+        "ls -la /app/moonlight-web-stream/moonlight-web/web-server/dist/",
+        "mkdir -p /app/static && cp -r /app/moonlight-web-stream/moonlight-web/web-server/dist/* /app/static/",
+        "ls -la /app/static/",
     )
     # Copy configuration files from the already-copied source tree
     .run_commands(
@@ -364,7 +366,7 @@ def cloud_gaming_server():
         },
         "web_server": {
             "bind_address": "0.0.0.0:8080",
-            "session_cookie_secure": True,
+            "session_cookie_secure": False,  # Modal proxy may use HTTP internally
             "first_login_create_admin": True,
             "first_login_assign_global_hosts": True
         },
