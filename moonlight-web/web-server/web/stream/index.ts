@@ -168,19 +168,19 @@ export class Stream implements Component {
     }
 
     private async onMessage(message: StreamServerMessage) {
-        if ("DebugLog" in message) {
+        if (typeof message === "object" && "DebugLog" in message) {
             const debugLog = message.DebugLog
 
             this.debugLog(debugLog.message, {
                 type: debugLog.ty ?? undefined
             })
-        } else if ("UpdateApp" in message) {
+        } else if (typeof message === "object" && "UpdateApp" in message) {
             const event: InfoEvent = new CustomEvent("stream-info", {
                 detail: { type: "app", app: message.UpdateApp.app }
             })
 
             this.eventTarget.dispatchEvent(event)
-        } else if ("ConnectionComplete" in message) {
+        } else if (typeof message === "object" && "ConnectionComplete" in message) {
             const capabilities = message.ConnectionComplete.capabilities
             const formatRaw = message.ConnectionComplete.format
             const width = message.ConnectionComplete.width
@@ -223,13 +223,13 @@ export class Stream implements Component {
                     sampleRate: audioSampleRate
                 })
             ])
-        } else if ("ConnectionTerminated" in message) {
+        } else if (typeof message === "object" && "ConnectionTerminated" in message) {
             const code = message.ConnectionTerminated.error_code
 
             this.debugLog(`ConnectionTerminated with code ${code}`, { type: "fatalDescription" })
         }
         // -- WebRTC Config
-        else if ("Setup" in message) {
+        else if (typeof message === "object" && "Setup" in message) {
             const iceServers = message.Setup.ice_servers
 
             this.iceServers = iceServers
@@ -241,7 +241,7 @@ export class Stream implements Component {
             await this.startConnection()
         }
         // -- WebRTC
-        else if ("WebRtc" in message) {
+        else if (typeof message === "object" && "WebRtc" in message) {
             const webrtcMessage = message.WebRtc
             if (this.transport instanceof WebRTCTransport) {
                 this.transport.onReceiveMessage(webrtcMessage)
@@ -250,29 +250,29 @@ export class Stream implements Component {
             }
         }
         // -- Room messages
-        else if ("RoomCreated" in message) {
+        else if (typeof message === "object" && "RoomCreated" in message) {
             this.roomInfo = message.RoomCreated.room
             this.playerSlot = message.RoomCreated.player_slot
 
-            this.debugLog(`Room created: ${this.roomInfo.room_id} - You are Player ${this.playerSlot[0] + 1} (Host)`)
+            this.debugLog(`Room created: ${this.roomInfo.room_id} - You are Player ${this.playerSlot + 1} (Host)`)
 
             const event: InfoEvent = new CustomEvent("stream-info", {
                 detail: { type: "roomCreated", room: this.roomInfo, playerSlot: this.playerSlot }
             })
             this.eventTarget.dispatchEvent(event)
         }
-        else if ("RoomJoined" in message) {
+        else if (typeof message === "object" && "RoomJoined" in message) {
             this.roomInfo = message.RoomJoined.room
             this.playerSlot = message.RoomJoined.player_slot
 
-            this.debugLog(`Joined room: ${this.roomInfo.room_id} - You are Player ${this.playerSlot[0] + 1}`)
+            this.debugLog(`Joined room: ${this.roomInfo.room_id} - You are Player ${this.playerSlot + 1}`)
 
             const event: InfoEvent = new CustomEvent("stream-info", {
                 detail: { type: "roomJoined", room: this.roomInfo, playerSlot: this.playerSlot }
             })
             this.eventTarget.dispatchEvent(event)
         }
-        else if ("RoomUpdated" in message) {
+        else if (typeof message === "object" && "RoomUpdated" in message) {
             this.roomInfo = message.RoomUpdated.room
 
             this.debugLog(`Room updated: ${this.roomInfo.players.length} players connected`)
@@ -282,7 +282,7 @@ export class Stream implements Component {
             })
             this.eventTarget.dispatchEvent(event)
         }
-        else if ("RoomJoinFailed" in message) {
+        else if (typeof message === "object" && "RoomJoinFailed" in message) {
             this.debugLog(`Failed to join room: ${message.RoomJoinFailed.reason}`, { type: "fatal" })
 
             const event: InfoEvent = new CustomEvent("stream-info", {
@@ -290,17 +290,17 @@ export class Stream implements Component {
             })
             this.eventTarget.dispatchEvent(event)
         }
-        else if ("PlayerLeft" in message) {
+        else if (typeof message === "object" && "PlayerLeft" in message) {
             const slot = message.PlayerLeft.slot
 
-            this.debugLog(`Player ${slot[0] + 1} left the room`)
+            this.debugLog(`Player ${slot + 1} left the room`)
 
             const event: InfoEvent = new CustomEvent("stream-info", {
                 detail: { type: "playerLeft", slot }
             })
             this.eventTarget.dispatchEvent(event)
         }
-        else if ("RoomClosed" in message) {
+        else if (message === "RoomClosed") {
             this.debugLog(`Room closed by host`, { type: "fatal" })
 
             const event: InfoEvent = new CustomEvent("stream-info", {
@@ -308,7 +308,7 @@ export class Stream implements Component {
             })
             this.eventTarget.dispatchEvent(event)
         }
-        else if ("GuestsKeyboardMouseEnabled" in message) {
+        else if (typeof message === "object" && "GuestsKeyboardMouseEnabled" in message) {
             this.guestsKeyboardMouseEnabled = message.GuestsKeyboardMouseEnabled.enabled
 
             this.debugLog(`Guests keyboard/mouse ${this.guestsKeyboardMouseEnabled ? "enabled" : "disabled"}`)
@@ -676,7 +676,7 @@ export class Stream implements Component {
     }
 
     isHost(): boolean {
-        return this.playerSlot !== null && this.playerSlot[0] === 0
+        return this.playerSlot !== null && this.playerSlot === 0
     }
 
     canUseKeyboardMouse(): boolean {
