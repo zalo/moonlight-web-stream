@@ -116,95 +116,11 @@ image = (
         "cp /app/moonlight-web-stream/discord-cloud-gaming/config/supervisord.conf /etc/supervisor/conf.d/gaming.conf || echo 'supervisord.conf not found'",
         "mkdir -p /etc/sunshine && cp /app/moonlight-web-stream/discord-cloud-gaming/config/sunshine.conf /etc/sunshine/sunshine.conf || echo 'sunshine.conf not found'",
     )
-    # Create start-services.sh inline to guarantee it exists
+    # Create start-services.sh from base64 to avoid heredoc parsing issues
     .run_commands(
-        """cat > /app/start-services.sh << 'SCRIPT_EOF'
-#!/bin/bash
-# Start all services for Discord Cloud Gaming
-set -e
-
-echo "Starting Discord Cloud Gaming services..."
-
-# Create required directories
-mkdir -p /tmp/runtime /tmp/pulse /data/sunshine /data/server
-chmod 700 /tmp/runtime
-
-# Export environment
-export DISPLAY=:99
-export PULSE_SERVER=unix:/tmp/pulse/native
-export XDG_RUNTIME_DIR=/tmp/runtime
-export HOME=/root
-
-# Start Xvfb (virtual display)
-echo "Starting Xvfb..."
-Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
-XVFB_PID=$!
-sleep 2
-
-# Verify X is running
-if ! xdpyinfo -display :99 >/dev/null 2>&1; then
-    echo "ERROR: Xvfb failed to start"
-    exit 1
-fi
-echo "Xvfb started successfully"
-
-# Start D-Bus
-echo "Starting D-Bus..."
-if [ ! -S /tmp/dbus-session.sock ]; then
-    dbus-daemon --session --fork --print-address > /tmp/dbus-address 2>/dev/null || true
-fi
-export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/dbus-address 2>/dev/null || echo "")
-
-# Start PulseAudio
-echo "Starting PulseAudio..."
-pulseaudio --daemonize=no --exit-idle-time=-1 --disable-shm \
-    --load="module-native-protocol-unix auth-anonymous=1 socket=/tmp/pulse/native" \
-    --load="module-always-sink" \
-    --load="module-null-sink sink_name=game_audio sink_properties=device.description=GameAudio" &
-PULSE_PID=$!
-sleep 2
-echo "PulseAudio started"
-
-# Configure default audio sink
-pactl set-default-sink game_audio 2>/dev/null || true
-
-# Start Sunshine if it exists
-if command -v sunshine &> /dev/null; then
-    echo "Starting Sunshine..."
-    mkdir -p /data/sunshine
-    if [ ! -f /data/sunshine/sunshine.conf ]; then
-        echo "Creating initial Sunshine configuration..."
-        cat > /data/sunshine/sunshine.conf << 'SUNCONF'
-origin_web_ui_allowed = wan
-encoder = nvenc
-min_log_level = info
-SUNCONF
-    fi
-    sunshine /data/sunshine/sunshine.conf &
-    SUNSHINE_PID=$!
-    sleep 3
-    echo "Sunshine started (PID: $SUNSHINE_PID)"
-else
-    echo "WARNING: Sunshine not found, skipping..."
-fi
-
-# Signal handler for cleanup
-cleanup() {
-    echo "Shutting down services..."
-    kill $SUNSHINE_PID 2>/dev/null || true
-    kill $PULSE_PID 2>/dev/null || true
-    kill $XVFB_PID 2>/dev/null || true
-    exit 0
-}
-trap cleanup SIGTERM SIGINT
-
-echo "All services started successfully"
-echo "Display: $DISPLAY"
-echo "Audio: $PULSE_SERVER"
-wait
-SCRIPT_EOF""",
+        "echo 'IyEvYmluL2Jhc2gKIyBTdGFydCBhbGwgc2VydmljZXMgZm9yIERpc2NvcmQgQ2xvdWQgR2FtaW5nCgpzZXQgLWUKCmVjaG8gIlN0YXJ0aW5nIERpc2NvcmQgQ2xvdWQgR2FtaW5nIHNlcnZpY2VzLi4uIgoKIyBDcmVhdGUgcmVxdWlyZWQgZGlyZWN0b3JpZXMKbWtkaXIgLXAgL3RtcC9ydW50aW1lCm1rZGlyIC1wIC90bXAvcHVsc2UKbWtkaXIgLXAgL2RhdGEvc3Vuc2hpbmUKbWtkaXIgLXAgL2RhdGEvc2VydmVyCmNobW9kIDcwMCAvdG1wL3J1bnRpbWUKCiMgRXhwb3J0IGVudmlyb25tZW50CmV4cG9ydCBESVNQTEFZPTo5OQpleHBvcnQgUFVMU0VfU0VSVkVSPXVuaXg6L3RtcC9wdWxzZS9uYXRpdmUKZXhwb3J0IFhER19SVU5USU1FX0RJUj0vdG1wL3J1bnRpbWUKZXhwb3J0IEhPTUU9L3Jvb3QKCiMgU3RhcnQgWHZmYiAodmlydHVhbCBkaXNwbGF5KQplY2hvICJTdGFydGluZyBYdmZiLi4uIgpYdmZiIDo5OSAtc2NyZWVuIDAgMTkyMHgxMDgweDI0IC1hYyArZXh0ZW5zaW9uIEdMWCArcmVuZGVyIC1ub3Jlc2V0ICYKWFZGQl9QSUQ9JCEKc2xlZXAgMgoKIyBWZXJpZnkgWCBpcyBydW5uaW5nCmlmICEgeGRweWluZm8gLWRpc3BsYXkgOjk5ID4vZGV2L251bGwgMj4mMTsgdGhlbgogICAgZWNobyAiRVJST1I6IFh2ZmIgZmFpbGVkIHRvIHN0YXJ0IgogICAgZXhpdCAxCmZpCmVjaG8gIlh2ZmIgc3RhcnRlZCBzdWNjZXNzZnVsbHkiCgojIFN0YXJ0IEQtQnVzCmVjaG8gIlN0YXJ0aW5nIEQtQnVzLi4uIgppZiBbICEgLVMgL3RtcC9kYnVzLXNlc3Npb24uc29jayBdOyB0aGVuCiAgICBkYnVzLWRhZW1vbiAtLXNlc3Npb24gLS1mb3JrIC0tcHJpbnQtYWRkcmVzcyA+IC90bXAvZGJ1cy1hZGRyZXNzCmZpCmV4cG9ydCBEQlVTX1NFU1NJT05fQlVTX0FERFJFU1M9JChjYXQgL3RtcC9kYnVzLWFkZHJlc3MgMj4vZGV2L251bGwgfHwgZWNobyAiIikKCiMgU3RhcnQgUHVsc2VBdWRpbwplY2hvICJTdGFydGluZyBQdWxzZUF1ZGlvLi4uIgpwdWxzZWF1ZGlvIC0tZGFlbW9uaXplPW5vIC0tZXhpdC1pZGxlLXRpbWU9LTEgLS1kaXNhYmxlLXNobSBcCiAgICAtLWxvYWQ9Im1vZHVsZS1uYXRpdmUtcHJvdG9jb2wtdW5peCBhdXRoLWFub255bW91cz0xIHNvY2tldD0vdG1wL3B1bHNlL25hdGl2ZSIgXAogICAgLS1sb2FkPSJtb2R1bGUtYWx3YXlzLXNpbmsiIFwKICAgIC0tbG9hZD0ibW9kdWxlLW51bGwtc2luayBzaW5rX25hbWU9Z2FtZV9hdWRpbyBzaW5rX3Byb3BlcnRpZXM9ZGV2aWNlLmRlc2NyaXB0aW9uPUdhbWVBdWRpbyIgJgpQVUxTRV9QSUQ9JCEKc2xlZXAgMgplY2hvICJQdWxzZUF1ZGlvIHN0YXJ0ZWQiCgojIENvbmZpZ3VyZSBkZWZhdWx0IGF1ZGlvIHNpbmsKcGFjdGwgc2V0LWRlZmF1bHQtc2luayBnYW1lX2F1ZGlvIDI+L2Rldi9udWxsIHx8IHRydWUKCiMgU3RhcnQgU3Vuc2hpbmUgaWYgaXQgZXhpc3RzCmlmIGNvbW1hbmQgLXYgc3Vuc2hpbmUgJj4gL2Rldi9udWxsOyB0aGVuCiAgICBlY2hvICJTdGFydGluZyBTdW5zaGluZS4uLiIKCiAgICAjIENyZWF0ZSBTdW5zaGluZSBjb25maWcgZGlyZWN0b3J5CiAgICBta2RpciAtcCAvZGF0YS9zdW5zaGluZQoKICAgICMgQ2hlY2sgaWYgU3Vuc2hpbmUgbmVlZHMgaW5pdGlhbCBzZXR1cAogICAgaWYgWyAhIC1mIC9kYXRhL3N1bnNoaW5lL3N1bnNoaW5lLmNvbmYgXTsgdGhlbgogICAgICAgIGVjaG8gIkNyZWF0aW5nIGluaXRpYWwgU3Vuc2hpbmUgY29uZmlndXJhdGlvbi4uLiIKICAgICAgICBjYXQgPiAvZGF0YS9zdW5zaGluZS9zdW5zaGluZS5jb25mIDw8ICdFT0YnCm9yaWdpbl93ZWJfdWlfYWxsb3dlZCA9IHdhbgplbmNvZGVyID0gbnZlbmMKbWluX2xvZ19sZXZlbCA9IGluZm8KRU9GCiAgICBmaQoKICAgICMgU3RhcnQgU3Vuc2hpbmUgd2l0aCBjb25maWcgZnJvbSBkYXRhIHZvbHVtZQogICAgc3Vuc2hpbmUgL2RhdGEvc3Vuc2hpbmUvc3Vuc2hpbmUuY29uZiAmCiAgICBTVU5TSElORV9QSUQ9JCEKICAgIHNsZWVwIDMKICAgIGVjaG8gIlN1bnNoaW5lIHN0YXJ0ZWQgKFBJRDogJFNVTlNISU5FX1BJRCkiCmVsc2UKICAgIGVjaG8gIldBUk5JTkc6IFN1bnNoaW5lIG5vdCBmb3VuZCwgc2tpcHBpbmcuLi4iCmZpCgojIFNpZ25hbCBoYW5kbGVyIGZvciBjbGVhbnVwCmNsZWFudXAoKSB7CiAgICBlY2hvICJTaHV0dGluZyBkb3duIHNlcnZpY2VzLi4uIgogICAga2lsbCAkU1VOU0hJTkVfUElEIDI+L2Rldi9udWxsIHx8IHRydWUKICAgIGtpbGwgJFBVTFNFX1BJRCAyPi9kZXYvbnVsbCB8fCB0cnVlCiAgICBraWxsICRYVkZCX1BJRCAyPi9kZXYvbnVsbCB8fCB0cnVlCiAgICBleGl0IDAKfQoKdHJhcCBjbGVhbnVwIFNJR1RFUk0gU0lHSU5UCgplY2hvICJBbGwgc2VydmljZXMgc3RhcnRlZCBzdWNjZXNzZnVsbHkiCmVjaG8gIkRpc3BsYXk6ICRESVNQTEFZIgplY2hvICJBdWRpbzogJFBVTFNFX1NFUlZFUiIKCiMgS2VlcCBzY3JpcHQgcnVubmluZwp3YWl0Cg==' | base64 -d > /app/start-services.sh",
         "chmod +x /app/start-services.sh",
-        "ls -la /app/start-services.sh",  # Verify it exists
+        "ls -la /app/start-services.sh",
     )
     # Set environment variables
     .env({
