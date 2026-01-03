@@ -331,7 +331,7 @@ async fn handle_init_room(
     };
 
     // Create IPC
-    let (ipc_sender, mut ipc_receiver) =
+    let (mut ipc_sender, mut ipc_receiver) =
         create_child_ipc::<ServerIpcMessage, StreamerIpcMessage>(
             "Streamer",
             stdin,

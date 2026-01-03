@@ -642,8 +642,9 @@ impl StreamConnection {
     }
 
     async fn on_ipc_message(self: &Arc<StreamConnection>, message: ServerIpcMessage) {
-        // Handle peer management messages
-        match &message {
+        // Handle peer management messages and transform peer-specific messages
+        // to their base versions (avoiding recursion)
+        let message = match message {
             ServerIpcMessage::PeerConnected {
                 peer_id,
                 player_slot,
@@ -656,45 +657,45 @@ impl StreamConnection {
                 );
                 let mut peer_manager = self.peer_manager.write().await;
                 peer_manager.add_peer(
-                    *peer_id,
-                    *player_slot,
-                    *video_frame_queue_size,
-                    *audio_sample_queue_size,
+                    peer_id,
+                    player_slot,
+                    video_frame_queue_size,
+                    audio_sample_queue_size,
                 );
                 return;
             }
             ServerIpcMessage::PeerDisconnected { peer_id } => {
                 info!("Peer {:?} disconnected", peer_id);
                 let mut peer_manager = self.peer_manager.write().await;
-                peer_manager.remove_peer(*peer_id);
+                peer_manager.remove_peer(peer_id);
                 return;
             }
             ServerIpcMessage::PeerWebSocket { peer_id, message } => {
                 // Set current peer context for input handling
                 {
                     let mut current = self.current_peer_id.write().await;
-                    *current = Some(*peer_id);
+                    *current = Some(peer_id);
                 }
-                // Forward to regular message handling
-                return self.on_ipc_message(ServerIpcMessage::WebSocket(message.clone())).await;
+                // Transform to base WebSocket message (no recursion)
+                ServerIpcMessage::WebSocket(message)
             }
             ServerIpcMessage::PeerWebSocketTransport { peer_id, data } => {
                 // Set current peer context for input handling
                 {
                     let mut current = self.current_peer_id.write().await;
-                    *current = Some(*peer_id);
+                    *current = Some(peer_id);
                 }
-                // Forward to regular transport handling
-                return self.on_ipc_message(ServerIpcMessage::WebSocketTransport(data.clone())).await;
+                // Transform to base WebSocketTransport message (no recursion)
+                ServerIpcMessage::WebSocketTransport(data)
             }
             ServerIpcMessage::SetGuestsKeyboardMouseEnabled { enabled } => {
                 info!("Setting guests keyboard/mouse enabled: {}", enabled);
                 let mut peer_manager = self.peer_manager.write().await;
-                peer_manager.set_guests_keyboard_mouse_enabled(*enabled);
+                peer_manager.set_guests_keyboard_mouse_enabled(enabled);
                 return;
             }
-            _ => {}
-        }
+            other => other,
+        };
 
         if let ServerIpcMessage::WebSocket(StreamClientMessage::SetTransport(transport_type)) =
             &message
