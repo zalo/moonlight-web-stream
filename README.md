@@ -15,6 +15,51 @@ Moonlight Web now supports **multiplayer streaming sessions** where multiple use
 
 This enables couch co-op and local multiplayer games to be played with friends over the internet, each connecting from their own browser.
 
+## Discord Activity / Cloud Gaming (New!)
+
+Moonlight Web can be deployed as a **Discord Activity** for cloud gaming with friends directly from Discord voice channels. This uses [Modal](https://modal.com) to provision cloud GPUs on-demand.
+
+### Features
+
+- **Cloud GPU Rendering**: Games run on Modal's L4 GPUs with hardware-accelerated video encoding
+- **Discord Integration**: Launch directly from Discord voice channels as an Activity
+- **Spectator-First Design**: Users join as spectators by default, then opt-in to become players
+- **Up to 4 Players**: Each player gets their own gamepad slot for local multiplayer games
+- **Unlimited Spectators**: Friends can watch without taking up player slots
+- **Discord Authentication**: Uses Discord OAuth2 for seamless authentication
+- **WebRTC Streaming**: Low-latency video/audio via STUN/TURN servers
+
+### Quick Start (Discord Cloud Gaming)
+
+See the [Discord Cloud Gaming README](discord-cloud-gaming/README.md) for detailed setup instructions.
+
+**Prerequisites:**
+1. [Modal](https://modal.com) account
+2. [Discord Developer Application](https://discord.com/developers/applications) with Activities enabled
+
+**Deployment:**
+```bash
+# Configure Modal secrets
+modal secret create discord-cloud-gaming \
+  DISCORD_CLIENT_ID="your-client-id" \
+  DISCORD_CLIENT_SECRET="your-client-secret" \
+  TURN_SERVER_URL="turn:your-turn-server.com:3478" \
+  TURN_USERNAME="your-turn-username" \
+  TURN_CREDENTIAL="your-turn-credential"
+
+# Deploy to Modal
+cd discord-cloud-gaming
+modal deploy modal_app.py
+```
+
+**How It Works:**
+1. Host starts the Discord Activity from a voice channel
+2. A cloud GPU instance spins up with Sunshine and the game
+3. Friends in the voice channel see the Activity and can join
+4. New users join as **spectators** (watch-only)
+5. Click "Join as Player" to take a player slot (up to 4)
+6. Each player's gamepad maps to their assigned slot
+
 ![An image displaying: PC with sunshine and moonlight web installed, a browser making requests to it](/readme/structure.png)
 
 ## Overview
@@ -23,6 +68,7 @@ This enables couch co-op and local multiplayer games to be played with friends o
 - [Installation](#installation)
   - [Manual Installation](#install-manually)
   - [Docker Installation](docker/README.md)
+  - [Discord Cloud Gaming](discord-cloud-gaming/README.md)
 - [Setup](#setup)
   - [Streaming over the Internet](#streaming-over-the-internet)
   - [Configuring https](#configuring-https)
