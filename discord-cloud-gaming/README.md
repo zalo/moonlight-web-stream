@@ -21,8 +21,18 @@ Cloud gaming system that runs on Modal with an L4 GPU, streams via Sunshine/Moon
 
 ### 1. Create Cloudflare TURN Key (Recommended)
 
-Cloudflare TURN provides reliable NAT traversal with global anycast distribution. It's $0.05/GB and credentials are auto-refreshed.
+Cloudflare TURN provides reliable NAT traversal with global anycast distribution. The Modal app automatically fetches fresh credentials at startup.
 
+**Why Cloudflare TURN?**
+| Feature | Benefit |
+|---------|---------|
+| **Anycast network** | Users connect to nearest of 300+ global datacenters |
+| **Auto credentials** | No manual credential rotation needed |
+| **Low latency** | 95% of internet users within 50ms of a server |
+| **Encrypted** | End-to-end DTLS encryption (Cloudflare can't see your stream) |
+| **Cost** | $0.05/GB (typically a few cents per gaming session) |
+
+**Setup Steps:**
 1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com) → **Calls** → **TURN Keys**
 2. Click **Create TURN Key**
 3. Give it a name (e.g., "discord-cloud-gaming")
@@ -133,10 +143,15 @@ After deployment, Modal will give you a URL like `https://your-app--cloud-gaming
 
 ## Configuration
 
-The server configuration is stored at `/data/server/config.json` inside the container.
+The server configuration is stored at `/data/server/config.json` inside the container. This is **auto-generated** at startup with your Modal secrets.
 
-Key settings:
+**Automatic TURN Configuration:**
+When you provide `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN`, the app will:
+1. Fetch fresh TURN credentials from Cloudflare's API at startup
+2. Configure WebRTC with the Cloudflare TURN servers automatically
+3. Credentials are valid for 24 hours and refresh each new session
 
+**Manual Configuration** (only if not using Cloudflare):
 ```json
 {
   "webrtc": {
@@ -211,5 +226,6 @@ npm run build
 ## Security Notes
 
 - Discord credentials should only be stored in Modal secrets
-- TURN credentials should be rotated regularly if using static credentials
-- Consider using TURN with time-limited credentials for production
+- **Cloudflare TURN** credentials auto-rotate each session (recommended)
+- If using manual TURN, rotate credentials regularly
+- All WebRTC media is encrypted end-to-end via DTLS
