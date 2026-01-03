@@ -154,7 +154,7 @@ class GuestViewerApp implements Component {
     private getStreamRect(): DOMRect {
         const renderer = this.stream?.getVideoRenderer()
         if (renderer) {
-            return renderer.getRect()
+            return renderer.getStreamRect()
         }
         return new DOMRect(0, 0, window.innerWidth, window.innerHeight)
     }
