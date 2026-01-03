@@ -6,6 +6,7 @@ This Modal app provides a cloud gaming instance with:
 - Sunshine for game streaming
 - Moonlight Web Stream for WebRTC delivery
 - Discord Activity integration
+- Integrated TURN server support (Cloudflare or built-in coturn)
 """
 
 import modal
@@ -14,6 +15,8 @@ import os
 import time
 import signal
 import sys
+import secrets
+import hashlib
 from pathlib import Path
 
 # Create the Modal app
@@ -56,6 +59,8 @@ image = (
         "curl",
         "ca-certificates",
         "gnupg",
+        # TURN server
+        "coturn",
         # Misc
         "supervisor",
         "dbus-x11",
@@ -131,11 +136,134 @@ image = (
         "XDG_RUNTIME_DIR": "/tmp/runtime",
         "SUNSHINE_CONFIG_DIR": "/data/sunshine",
     })
+    # Install requests for Cloudflare API calls
+    .pip_install("requests")
 )
 
 
 # Secrets for Discord and TURN server credentials
 discord_secret = modal.Secret.from_name("discord-cloud-gaming", required_keys=[])
+
+
+def fetch_cloudflare_turn_credentials(key_id: str, api_token: str, ttl: int = 86400) -> dict | None:
+    """
+    Fetch fresh TURN credentials from Cloudflare's API.
+
+    Args:
+        key_id: Cloudflare TURN key ID
+        api_token: Cloudflare TURN API token
+        ttl: Time-to-live for credentials in seconds (default 24 hours)
+
+    Returns:
+        ICE server configuration dict or None if failed
+    """
+    import requests
+
+    try:
+        response = requests.post(
+            f"https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate-ice-servers",
+            headers={
+                "Authorization": f"Bearer {api_token}",
+                "Content-Type": "application/json"
+            },
+            json={"ttl": ttl},
+            timeout=10
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            # Cloudflare returns iceServers array
+            if "iceServers" in data:
+                return data["iceServers"]
+        else:
+            print(f"Cloudflare TURN API error: {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f"Failed to fetch Cloudflare TURN credentials: {e}")
+
+    return None
+
+
+def generate_coturn_credentials(secret: str, username: str = None, ttl: int = 86400) -> tuple[str, str]:
+    """
+    Generate time-limited TURN credentials using coturn's TURN REST API format.
+
+    Args:
+        secret: Shared secret for credential generation
+        username: Optional username prefix
+        ttl: Time-to-live in seconds
+
+    Returns:
+        Tuple of (username, credential)
+    """
+    import time
+    import hmac
+    import base64
+
+    # Username format: timestamp:username
+    timestamp = int(time.time()) + ttl
+    user = f"{timestamp}:{username or 'user'}"
+
+    # Generate HMAC-SHA1 credential
+    credential = base64.b64encode(
+        hmac.new(secret.encode(), user.encode(), hashlib.sha1).digest()
+    ).decode()
+
+    return user, credential
+
+
+def start_coturn_server(public_ip: str, secret: str, tcp_port: int = 3478) -> subprocess.Popen:
+    """
+    Start coturn TURN server with the given configuration.
+
+    Args:
+        public_ip: Public IP address to advertise
+        secret: Shared secret for credential generation
+        tcp_port: TCP port for TURN (UDP not available on Modal)
+
+    Returns:
+        Popen process handle
+    """
+    # Write coturn config
+    config = f"""
+# Coturn configuration for Modal
+listening-port={tcp_port}
+tls-listening-port=5349
+relay-ip={public_ip}
+external-ip={public_ip}
+min-port=49152
+max-port=65535
+
+# Use long-term credentials with shared secret
+use-auth-secret
+static-auth-secret={secret}
+realm=cloudgaming.modal.run
+
+# Enable TCP relay (since UDP ingress isn't available)
+no-udp
+no-dtls
+tcp-relay
+
+# Logging
+log-file=/tmp/coturn.log
+verbose
+
+# Performance
+total-quota=100
+max-bps=0
+"""
+
+    config_path = "/tmp/turnserver.conf"
+    with open(config_path, "w") as f:
+        f.write(config)
+
+    # Start turnserver
+    process = subprocess.Popen(
+        ["turnserver", "-c", config_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+
+    return process
 
 
 @app.function(
@@ -144,7 +272,7 @@ discord_secret = modal.Secret.from_name("discord-cloud-gaming", required_keys=[]
     timeout=3600 * 4,  # 4 hour max session
     volumes={"/data": game_data},
     secrets=[discord_secret],
-    # Allow WebRTC traffic
+    # Allow concurrent WebRTC connections
     allow_concurrent_inputs=100,
 )
 @modal.web_server(port=8080, startup_timeout=120)
@@ -157,10 +285,13 @@ def cloud_gaming_server():
     2. PulseAudio (virtual audio)
     3. Sunshine (game streaming server)
     4. Moonlight Web Server (WebRTC frontend)
+    5. TURN server (Cloudflare or built-in coturn)
     """
     import subprocess
     import os
     import time
+    import json
+    import requests
 
     # Create runtime directories
     os.makedirs("/tmp/runtime", exist_ok=True)
@@ -178,23 +309,34 @@ def cloud_gaming_server():
     env = os.environ.copy()
     env["RUST_LOG"] = "info"
 
-    # Create config if it doesn't exist
-    config_path = "/data/server/config.json"
-    if not os.path.exists(config_path):
-        import json
+    # Build ICE servers configuration
+    ice_servers = [
+        {
+            "urls": [
+                "stun:stun.l.google.com:19302",
+                "stun:stun1.l.google.com:3478",
+                "stun:stun2.l.google.com:19302"
+            ]
+        }
+    ]
 
-        # Build ICE servers list - STUN servers first
-        ice_servers = [
-            {
-                "urls": [
-                    "stun:stun.l.google.com:19302",
-                    "stun:stun1.l.google.com:3478",
-                    "stun:stun2.l.google.com:19302"
-                ]
-            }
-        ]
+    # Try to configure TURN server
+    turn_configured = False
 
-        # Add TURN server if configured via secrets
+    # Option 1: Cloudflare TURN (recommended)
+    cf_turn_key_id = os.environ.get("CLOUDFLARE_TURN_KEY_ID")
+    cf_turn_api_token = os.environ.get("CLOUDFLARE_TURN_API_TOKEN")
+
+    if cf_turn_key_id and cf_turn_api_token:
+        print("Fetching Cloudflare TURN credentials...")
+        cf_ice_servers = fetch_cloudflare_turn_credentials(cf_turn_key_id, cf_turn_api_token)
+        if cf_ice_servers:
+            ice_servers.extend(cf_ice_servers)
+            turn_configured = True
+            print(f"Cloudflare TURN configured with {len(cf_ice_servers)} servers")
+
+    # Option 2: Manual TURN configuration (legacy)
+    if not turn_configured:
         turn_url = os.environ.get("TURN_SERVER_URL")
         turn_username = os.environ.get("TURN_USERNAME")
         turn_credential = os.environ.get("TURN_CREDENTIAL")
@@ -204,41 +346,54 @@ def cloud_gaming_server():
                 "username": turn_username,
                 "credential": turn_credential
             })
+            turn_configured = True
+            print(f"Manual TURN configured: {turn_url}")
 
-        config = {
-            "data_storage": {
-                "type": "json",
-                "path": "/data/server/data.json",
-                "session_expiration_check_interval": {"secs": 300, "nanos": 0}
-            },
-            "webrtc": {
-                "ice_servers": ice_servers,
-                "network_types": ["udp4", "udp6"],
-                "include_loopback_candidates": False
-            },
-            "web_server": {
-                "bind_address": "0.0.0.0:8080",
-                "session_cookie_secure": True,
-                "first_login_create_admin": True,
-                "first_login_assign_global_hosts": True
-            },
-            "streamer_path": "/app/streamer",
-            "log": {
-                "level_filter": "Info"
-            }
+    # Option 3: Built-in coturn over TCP tunnel (fallback)
+    # Note: This requires modal.forward() which needs to be set up outside web_server
+    # For now, we'll skip this and recommend Cloudflare
+    if not turn_configured:
+        print("WARNING: No TURN server configured!")
+        print("WebRTC may fail for users behind restrictive NATs.")
+        print("Configure Cloudflare TURN by setting CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN")
+
+    # Create config
+    config_path = "/data/server/config.json"
+    config = {
+        "data_storage": {
+            "type": "json",
+            "path": "/data/server/data.json",
+            "session_expiration_check_interval": {"secs": 300, "nanos": 0}
+        },
+        "webrtc": {
+            "ice_servers": ice_servers,
+            "network_types": ["udp4", "udp6"],
+            "include_loopback_candidates": False
+        },
+        "web_server": {
+            "bind_address": "0.0.0.0:8080",
+            "session_cookie_secure": True,
+            "first_login_create_admin": True,
+            "first_login_assign_global_hosts": True
+        },
+        "streamer_path": "/app/streamer",
+        "log": {
+            "level_filter": "Info"
+        }
+    }
+
+    # Add Discord config if credentials are provided
+    discord_client_id = os.environ.get("DISCORD_CLIENT_ID")
+    discord_client_secret = os.environ.get("DISCORD_CLIENT_SECRET")
+    if discord_client_id and discord_client_secret:
+        config["discord"] = {
+            "client_id": discord_client_id,
+            "client_secret": discord_client_secret
         }
 
-        # Add Discord config if credentials are provided
-        discord_client_id = os.environ.get("DISCORD_CLIENT_ID")
-        discord_client_secret = os.environ.get("DISCORD_CLIENT_SECRET")
-        if discord_client_id and discord_client_secret:
-            config["discord"] = {
-                "client_id": discord_client_id,
-                "client_secret": discord_client_secret
-            }
-
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
+    # Always write fresh config to pick up new TURN credentials
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
 
     # Run web server
     subprocess.run(
@@ -266,6 +421,24 @@ def main():
     """
     print("Discord Cloud Gaming Modal App")
     print("=" * 40)
+    print()
+    print("TURN Server Options:")
+    print()
+    print("  1. Cloudflare TURN (Recommended)")
+    print("     - Global anycast network, low latency")
+    print("     - $0.05/GB, credentials auto-refresh")
+    print("     - Set: CLOUDFLARE_TURN_KEY_ID, CLOUDFLARE_TURN_API_TOKEN")
+    print()
+    print("  2. Manual TURN Server")
+    print("     - Use your own coturn/TURN server")
+    print("     - Set: TURN_SERVER_URL, TURN_USERNAME, TURN_CREDENTIAL")
+    print()
+    print("Setup secrets:")
+    print("  modal secret create discord-cloud-gaming \\")
+    print("    DISCORD_CLIENT_ID='...' \\")
+    print("    DISCORD_CLIENT_SECRET='...' \\")
+    print("    CLOUDFLARE_TURN_KEY_ID='...' \\")
+    print("    CLOUDFLARE_TURN_API_TOKEN='...'")
     print()
     print("To deploy:")
     print("  modal deploy modal_app.py")

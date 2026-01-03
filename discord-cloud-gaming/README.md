@@ -15,11 +15,20 @@ Cloud gaming system that runs on Modal with an L4 GPU, streams via Sunshine/Moon
 
 1. [Modal](https://modal.com) account
 2. [Discord Developer Application](https://discord.com/developers/applications)
-3. (Optional) TURN server for reliable NAT traversal
+3. [Cloudflare account](https://dash.cloudflare.com) (free) for TURN server
 
 ## Setup
 
-### 1. Create Discord Application
+### 1. Create Cloudflare TURN Key (Recommended)
+
+Cloudflare TURN provides reliable NAT traversal with global anycast distribution. It's $0.05/GB and credentials are auto-refreshed.
+
+1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com) → **Calls** → **TURN Keys**
+2. Click **Create TURN Key**
+3. Give it a name (e.g., "discord-cloud-gaming")
+4. Copy the **Key ID** and **API Token** - you'll need these for Modal secrets
+
+### 2. Create Discord Application
 
 1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
 2. Create a new application
@@ -30,29 +39,43 @@ Cloud gaming system that runs on Modal with an L4 GPU, streams via Sunshine/Moon
    - Set the Activity URL Root to your Modal deployment URL
 5. Copy the Client ID and Client Secret
 
-### 2. Configure Modal Secrets
+### 3. Configure Modal Secrets
 
-Create a Modal secret named `discord-cloud-gaming`:
+Create a Modal secret named `discord-cloud-gaming` with your credentials:
 
 ```bash
 modal secret create discord-cloud-gaming \
-  DISCORD_CLIENT_ID="your-client-id" \
-  DISCORD_CLIENT_SECRET="your-client-secret" \
+  DISCORD_CLIENT_ID="your-discord-client-id" \
+  DISCORD_CLIENT_SECRET="your-discord-client-secret" \
+  CLOUDFLARE_TURN_KEY_ID="your-cloudflare-turn-key-id" \
+  CLOUDFLARE_TURN_API_TOKEN="your-cloudflare-turn-api-token"
+```
+
+| Secret | Description | Where to get it |
+|--------|-------------|-----------------|
+| `DISCORD_CLIENT_ID` | Discord app client ID | Discord Developer Portal → Your App → OAuth2 |
+| `DISCORD_CLIENT_SECRET` | Discord app secret | Discord Developer Portal → Your App → OAuth2 |
+| `CLOUDFLARE_TURN_KEY_ID` | Cloudflare TURN key ID | Cloudflare Dashboard → Calls → TURN Keys |
+| `CLOUDFLARE_TURN_API_TOKEN` | Cloudflare TURN API token | Cloudflare Dashboard → Calls → TURN Keys |
+
+**Alternative: Manual TURN Server** (if you have your own coturn server):
+```bash
+modal secret create discord-cloud-gaming \
+  DISCORD_CLIENT_ID="..." \
+  DISCORD_CLIENT_SECRET="..." \
   TURN_SERVER_URL="turn:your-turn-server.com:3478" \
   TURN_USERNAME="your-turn-username" \
   TURN_CREDENTIAL="your-turn-credential"
 ```
 
-TURN server credentials are optional but recommended for reliable connectivity through restrictive NATs.
-
-### 3. Deploy to Modal
+### 4. Deploy to Modal
 
 ```bash
 cd discord-cloud-gaming
 modal deploy modal_app.py
 ```
 
-### 4. Configure Discord Activity URL
+### 5. Configure Discord Activity URL
 
 After deployment, Modal will give you a URL like `https://your-app--cloud-gaming-server.modal.run`.
 
