@@ -651,8 +651,10 @@ class ViewerSidebar implements Component, Sidebar {
     private roomIdDisplay = document.createElement("div")
     private playerSlotDisplay = document.createElement("div")
     private playerCountDisplay = document.createElement("div")
+    private copyGuestUrlButton = document.createElement("button")
     private guestKeyboardMouseToggle = document.createElement("button")
     private guestsKeyboardMouseEnabled = false
+    private currentRoomId: string | null = null
 
     constructor(app: ViewerApp) {
         this.app = app
@@ -769,6 +771,32 @@ class ViewerSidebar implements Component, Sidebar {
             this.app.getStream()?.setGuestsKeyboardMouseEnabled(newState)
         })
         this.roomSection.appendChild(this.guestKeyboardMouseToggle)
+
+        // Copy guest URL button (host only)
+        this.copyGuestUrlButton.innerText = "Copy Guest URL"
+        this.copyGuestUrlButton.style.display = "none" // Only visible for host
+        this.copyGuestUrlButton.style.marginTop = "8px"
+        this.copyGuestUrlButton.addEventListener("click", async () => {
+            if (this.currentRoomId) {
+                const guestUrl = this.buildGuestUrl(this.currentRoomId)
+                try {
+                    await navigator.clipboard.writeText(guestUrl)
+                    this.copyGuestUrlButton.innerText = "Copied!"
+                    setTimeout(() => {
+                        this.copyGuestUrlButton.innerText = "Copy Guest URL"
+                    }, 2000)
+                } catch (err) {
+                    // Fallback for older browsers
+                    prompt("Copy this URL to share with guests:", guestUrl)
+                }
+            }
+        })
+        this.roomSection.appendChild(this.copyGuestUrlButton)
+    }
+
+    private buildGuestUrl(roomId: string): string {
+        const baseUrl = window.location.origin + window.location.pathname.replace(/\/[^\/]*$/, '')
+        return `${baseUrl}/join.html?room=${encodeURIComponent(roomId)}`
     }
 
     onCapabilitiesChange(capabilities: StreamCapabilities) {
@@ -777,13 +805,15 @@ class ViewerSidebar implements Component, Sidebar {
 
     // Room UI update methods
     updateRoomInfo(roomId: string, playerSlot: number, playerCount: number, maxPlayers: number, isHost: boolean) {
+        this.currentRoomId = roomId
         this.roomSection.style.display = "block"
         this.roomIdDisplay.innerText = `Room: ${roomId}`
         this.playerSlotDisplay.innerText = `You: Player ${playerSlot + 1}${isHost ? " (Host)" : ""}`
         this.playerCountDisplay.innerText = `Players: ${playerCount}/${maxPlayers}`
 
-        // Show/hide guest keyboard/mouse toggle based on host status
+        // Show/hide host-only controls
         this.guestKeyboardMouseToggle.style.display = isHost ? "block" : "none"
+        this.copyGuestUrlButton.style.display = isHost ? "block" : "none"
     }
 
     updateGuestsKeyboardMouseEnabled(enabled: boolean) {

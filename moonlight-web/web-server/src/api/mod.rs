@@ -317,6 +317,8 @@ pub fn api_service() -> impl HttpServiceFactory {
             stream::cancel_host,
             stream::list_rooms,
         ])
+        // Guest stream endpoint - no auth required
+        .service(stream::guest_stream)
         .service(services![
             // -- Admin
             add_user,

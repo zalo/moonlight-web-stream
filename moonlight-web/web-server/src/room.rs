@@ -8,12 +8,28 @@ use std::{
 
 use actix_ws::Session;
 use common::{
-    api_bindings::{PlayerSlot, RoomInfo, RoomPlayer, StreamServerMessage},
+    api_bindings::{PlayerSlot, RoomInfo, RoomPlayer, RtcIceServer, StreamCapabilities, StreamServerMessage},
     ipc::{PeerId, ServerIpcMessage},
     serialize_json,
 };
 use log::{debug, info, warn};
 use tokio::sync::{Mutex, RwLock};
+
+/// Stored stream state so late-joining clients can get connection info
+#[derive(Clone)]
+pub struct StreamState {
+    pub capabilities: StreamCapabilities,
+    pub format: u32,
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub audio_sample_rate: u32,
+    pub audio_channel_count: u32,
+    pub audio_streams: u32,
+    pub audio_coupled_streams: u32,
+    pub audio_samples_per_frame: u32,
+    pub audio_mapping: [u8; 8],
+}
 
 /// Global counter for generating unique peer IDs
 static PEER_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -76,6 +92,10 @@ pub struct Room {
     occupied_slots: [bool; PlayerSlot::MAX_PLAYERS],
     /// Whether guests (non-host players) can use keyboard/mouse
     pub guests_keyboard_mouse_enabled: bool,
+    /// ICE servers for WebRTC - stored so late-joining clients can get them
+    pub ice_servers: Option<Vec<RtcIceServer>>,
+    /// Stream state - stored when ConnectionComplete is received so late joiners can get it
+    pub stream_state: Option<StreamState>,
 }
 
 impl Room {
@@ -90,6 +110,8 @@ impl Room {
             ipc_sender: None,
             occupied_slots: [false; PlayerSlot::MAX_PLAYERS],
             guests_keyboard_mouse_enabled: false, // Default: guests cannot use KB/mouse
+            ice_servers: None,
+            stream_state: None,
         }
     }
 

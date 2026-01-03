@@ -47,6 +47,15 @@ export async function getApi(): Promise<Api> {
 
     return newApi
 }
+
+/**
+ * Get an API instance without requiring authentication.
+ * Used for guest connections that only need WebSocket access.
+ */
+export async function getApiNoAuth(): Promise<Api> {
+    const host_url = buildUrl("/api")
+    return { host_url, bearer: null, user: null }
+}
 export async function tryLogin(): Promise<Api | null> {
     const host_url = buildUrl("/api")
 

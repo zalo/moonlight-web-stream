@@ -2,7 +2,7 @@ use std::{process::Stdio, sync::Arc};
 
 use actix_web::{
     Error, HttpRequest, HttpResponse, get, post, rt as actix_rt,
-    web::{Data, Json, Payload},
+    web::{Data, Json, Payload, Query},
 };
 use actix_ws::{Closed, Message, MessageStream, Session};
 use common::{
@@ -14,6 +14,7 @@ use common::{
     serialize_json,
 };
 use log::{debug, error, info, warn};
+use serde::Deserialize;
 use tokio::{
     process::{Child, Command},
     spawn,
@@ -28,6 +29,13 @@ use crate::{
     },
     room::{Room, RoomClient},
 };
+
+/// Query parameters for guest stream endpoint
+#[derive(Debug, Deserialize)]
+pub struct GuestStreamQuery {
+    pub room_id: String,
+    pub player_name: Option<String>,
+}
 
 /// Handle the initial WebSocket connection for streaming
 /// This can either create a new room (host/Player 1) or join an existing room (Players 2-4)
@@ -54,6 +62,179 @@ pub async fn start_host(
     });
 
     Ok(response)
+}
+
+/// Handle WebSocket connection for guests joining an existing room
+/// This endpoint does NOT require authentication - guests can join with just a room ID
+#[get("/guest/stream")]
+pub async fn guest_stream(
+    web_app: Data<App>,
+    Query(query): Query<GuestStreamQuery>,
+    request: HttpRequest,
+    payload: Payload,
+) -> Result<HttpResponse, Error> {
+    let (response, session, stream) = actix_ws::handle(&request, payload)?;
+
+    let web_app = web_app.clone();
+    actix_rt::spawn(async move {
+        handle_guest_connection(
+            web_app,
+            session,
+            stream,
+            query.room_id,
+            query.player_name,
+        )
+        .await;
+    });
+
+    Ok(response)
+}
+
+/// Handle a guest WebSocket connection (no authentication required)
+async fn handle_guest_connection(
+    web_app: Data<App>,
+    mut session: Session,
+    mut stream: MessageStream,
+    room_id: String,
+    player_name: Option<String>,
+) {
+    // Default queue sizes for guests
+    let video_frame_queue_size = 4;
+    let audio_sample_queue_size = 4;
+
+    // Find the room
+    let Some(room) = web_app.room_manager().get_room(&room_id).await else {
+        let _ = send_ws_message(
+            &mut session,
+            StreamServerMessage::RoomJoinFailed {
+                reason: "Room not found".to_string(),
+            },
+        )
+        .await;
+        let _ = session.close(None).await;
+        return;
+    };
+
+    // Get the next available player slot
+    let (peer_id, player_slot, room_info, ipc_sender, ice_servers, stream_state) = {
+        let mut room_guard = room.lock().await;
+
+        let Some(player_slot) = room_guard.next_available_slot() else {
+            drop(room_guard);
+            let _ = send_ws_message(
+                &mut session,
+                StreamServerMessage::RoomJoinFailed {
+                    reason: "Room is full".to_string(),
+                },
+            )
+            .await;
+            let _ = session.close(None).await;
+            return;
+        };
+
+        let peer_id = web_app.room_manager().generate_peer_id();
+
+        // Add client to room
+        let client = RoomClient {
+            peer_id,
+            player_slot,
+            player_name: player_name.clone(),
+            session: session.clone(),
+            video_frame_queue_size,
+            audio_sample_queue_size,
+        };
+
+        if !room_guard.add_client(client) {
+            drop(room_guard);
+            let _ = send_ws_message(
+                &mut session,
+                StreamServerMessage::RoomJoinFailed {
+                    reason: "Failed to join room".to_string(),
+                },
+            )
+            .await;
+            let _ = session.close(None).await;
+            return;
+        }
+
+        let room_info = room_guard.to_room_info();
+        let ipc_sender = room_guard.ipc_sender.clone();
+        let ice_servers = room_guard.ice_servers.clone();
+        let stream_state = room_guard.stream_state.clone();
+
+        (peer_id, player_slot, room_info, ipc_sender, ice_servers, stream_state)
+    };
+
+    // Register peer with room manager
+    web_app.room_manager().register_peer(peer_id, &room_id).await;
+
+    // Send join success to the joining player
+    let _ = send_ws_message(
+        &mut session,
+        StreamServerMessage::RoomJoined {
+            room: room_info.clone(),
+            player_slot,
+        },
+    )
+    .await;
+
+    // Send Setup message with ICE servers so guest can initialize transport
+    if let Some(ice_servers) = ice_servers {
+        let _ = send_ws_message(
+            &mut session,
+            StreamServerMessage::Setup { ice_servers },
+        )
+        .await;
+    }
+
+    // If stream is already connected, send ConnectionComplete to guest
+    if let Some(state) = stream_state {
+        let _ = send_ws_message(
+            &mut session,
+            StreamServerMessage::ConnectionComplete {
+                capabilities: state.capabilities,
+                format: state.format,
+                width: state.width,
+                height: state.height,
+                fps: state.fps,
+                audio_sample_rate: state.audio_sample_rate,
+                audio_channel_count: state.audio_channel_count,
+                audio_streams: state.audio_streams,
+                audio_coupled_streams: state.audio_coupled_streams,
+                audio_samples_per_frame: state.audio_samples_per_frame,
+                audio_mapping: state.audio_mapping,
+            },
+        )
+        .await;
+    }
+
+    // Broadcast room update to all existing players
+    {
+        let room_guard = room.lock().await;
+        room_guard
+            .broadcast(StreamServerMessage::RoomUpdated {
+                room: room_info,
+            })
+            .await;
+    }
+
+    // Notify streamer about new peer
+    if let Some(mut ipc_sender) = ipc_sender.clone() {
+        ipc_sender
+            .send(ServerIpcMessage::PeerConnected {
+                peer_id,
+                player_slot,
+                video_frame_queue_size,
+                audio_sample_queue_size,
+            })
+            .await;
+    }
+
+    // Handle WebSocket messages from this client
+    if let Some(ipc_sender) = ipc_sender {
+        handle_client_websocket(web_app, room, peer_id, player_slot, &mut stream, ipc_sender)
+            .await;
+    }
 }
 
 async fn handle_stream_connection(
@@ -426,7 +607,7 @@ async fn handle_join_room(
     };
 
     // Get the next available player slot
-    let (peer_id, player_slot, room_info, ipc_sender) = {
+    let (peer_id, player_slot, room_info, ipc_sender, ice_servers, stream_state) = {
         let mut room_guard = room.lock().await;
 
         let Some(player_slot) = room_guard.next_available_slot() else {
@@ -469,8 +650,10 @@ async fn handle_join_room(
 
         let room_info = room_guard.to_room_info();
         let ipc_sender = room_guard.ipc_sender.clone();
+        let ice_servers = room_guard.ice_servers.clone();
+        let stream_state = room_guard.stream_state.clone();
 
-        (peer_id, player_slot, room_info, ipc_sender)
+        (peer_id, player_slot, room_info, ipc_sender, ice_servers, stream_state)
     };
 
     // Register peer with room manager
@@ -485,6 +668,36 @@ async fn handle_join_room(
         },
     )
     .await;
+
+    // Send Setup message with ICE servers so late-joining client can initialize transport
+    if let Some(ice_servers) = ice_servers {
+        let _ = send_ws_message(
+            &mut session,
+            StreamServerMessage::Setup { ice_servers },
+        )
+        .await;
+    }
+
+    // If stream is already connected, send ConnectionComplete to late-joining client
+    if let Some(state) = stream_state {
+        let _ = send_ws_message(
+            &mut session,
+            StreamServerMessage::ConnectionComplete {
+                capabilities: state.capabilities,
+                format: state.format,
+                width: state.width,
+                height: state.height,
+                fps: state.fps,
+                audio_sample_rate: state.audio_sample_rate,
+                audio_channel_count: state.audio_channel_count,
+                audio_streams: state.audio_streams,
+                audio_coupled_streams: state.audio_coupled_streams,
+                audio_samples_per_frame: state.audio_samples_per_frame,
+                audio_mapping: state.audio_mapping,
+            },
+        )
+        .await;
+    }
 
     // Broadcast room update to all existing players
     {
@@ -641,12 +854,50 @@ async fn handle_streamer_ipc(
     web_app: Data<App>,
     room_id: String,
 ) {
+    use crate::room::StreamState;
+
     while let Some(message) = ipc_receiver.recv().await {
         match message {
             StreamerIpcMessage::WebSocket(server_message) => {
-                // Broadcast to all clients in the room
-                let room_guard = room.lock().await;
-                room_guard.broadcast(server_message).await;
+                // Store Setup and ConnectionComplete for late-joining clients
+                {
+                    let mut room_guard = room.lock().await;
+                    match &server_message {
+                        StreamServerMessage::Setup { ice_servers } => {
+                            room_guard.ice_servers = Some(ice_servers.clone());
+                        }
+                        StreamServerMessage::ConnectionComplete {
+                            capabilities,
+                            format,
+                            width,
+                            height,
+                            fps,
+                            audio_sample_rate,
+                            audio_channel_count,
+                            audio_streams,
+                            audio_coupled_streams,
+                            audio_samples_per_frame,
+                            audio_mapping,
+                        } => {
+                            room_guard.stream_state = Some(StreamState {
+                                capabilities: capabilities.clone(),
+                                format: *format,
+                                width: *width,
+                                height: *height,
+                                fps: *fps,
+                                audio_sample_rate: *audio_sample_rate,
+                                audio_channel_count: *audio_channel_count,
+                                audio_streams: *audio_streams,
+                                audio_coupled_streams: *audio_coupled_streams,
+                                audio_samples_per_frame: *audio_samples_per_frame,
+                                audio_mapping: *audio_mapping,
+                            });
+                        }
+                        _ => {}
+                    }
+                    // Broadcast to all clients in the room
+                    room_guard.broadcast(server_message).await;
+                }
             }
             StreamerIpcMessage::PeerWebSocket { peer_id, message } => {
                 // Send to specific peer
