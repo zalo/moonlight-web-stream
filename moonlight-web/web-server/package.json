@@ -24,7 +24,7 @@
   "license": "GPL-3.0-or-later",
   "private": "true",
   "devDependencies": {
-    "@discord/embedded-app-sdk": "^1.9.1",
+    "@discord/embedded-app-sdk": "^2.4.0",
     "cpx": "1.2.1",
     "npm-watch": "0.13.0",
     "typescript": "5.9.3"
