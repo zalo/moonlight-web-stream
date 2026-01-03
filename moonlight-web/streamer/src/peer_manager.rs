@@ -89,6 +89,7 @@ impl PeerManager {
     }
 
     /// Check if a peer is a spectator
+    #[allow(dead_code)]
     pub fn is_spectator(&self, peer_id: PeerId) -> bool {
         self.peers
             .get(&peer_id)
@@ -97,6 +98,7 @@ impl PeerManager {
     }
 
     /// Check if a peer can provide input (not a spectator)
+    #[allow(dead_code)]
     pub fn can_input(&self, peer_id: PeerId) -> bool {
         self.peers
             .get(&peer_id)
