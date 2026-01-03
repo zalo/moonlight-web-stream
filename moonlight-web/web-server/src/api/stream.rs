@@ -817,7 +817,7 @@ async fn handle_client_disconnect(
     web_app: Data<App>,
     room: Arc<Mutex<Room>>,
     peer_id: PeerId,
-    player_slot: PlayerSlot,
+    player_slot: Option<PlayerSlot>,
     mut ipc_sender: common::ipc::IpcSender<ServerIpcMessage>,
 ) {
     // Remove peer from room manager
@@ -834,16 +834,26 @@ async fn handle_client_disconnect(
 
         room_guard.remove_client(peer_id);
 
-        // If host left, close the room
-        if player_slot.is_host() {
+        // Check if host left (only players have slots, and host is always slot 0)
+        let is_host = player_slot.map(|s| s.is_host()).unwrap_or(false);
+
+        if is_host {
             // Broadcast room closed to remaining players
             room_guard.broadcast(StreamServerMessage::RoomClosed).await;
             (true, room_id)
-        } else {
-            // Broadcast player left to remaining players
+        } else if let Some(slot) = player_slot {
+            // Player (non-host) left - broadcast player left
             room_guard
-                .broadcast(StreamServerMessage::PlayerLeft { slot: player_slot })
+                .broadcast(StreamServerMessage::PlayerLeft { slot })
                 .await;
+            room_guard
+                .broadcast(StreamServerMessage::RoomUpdated {
+                    room: room_guard.to_room_info(),
+                })
+                .await;
+            (room_guard.is_empty(), room_id)
+        } else {
+            // Spectator left - just update the room info
             room_guard
                 .broadcast(StreamServerMessage::RoomUpdated {
                     room: room_guard.to_room_info(),
