@@ -8,9 +8,9 @@ jobs:
     strategy:
       matrix:
         arch:
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             name: x86_64
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-22.04-arm
             name: aarch64
 
     name: ${{ matrix.arch.name }}
