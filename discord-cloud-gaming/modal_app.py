@@ -87,10 +87,11 @@ image = (
         "apt-get install -y /tmp/sunshine.deb || echo 'Sunshine install attempted'",
         "rm /tmp/sunshine.deb",
     )
-    # Copy the moonlight-web-stream source
+    # Copy the moonlight-web-stream source (copy=True needed for subsequent build steps)
     .add_local_dir(
         str(Path(__file__).parent.parent),
         "/app/moonlight-web-stream",
+        copy=True,
         ignore=[
             ".git",
             "target",
@@ -109,22 +110,26 @@ image = (
         "cd /app/moonlight-web-stream/moonlight-web/web-server && npm install && npm run build",
         "mkdir -p /app/static && cp -r /app/moonlight-web-stream/moonlight-web/web-server/dist/* /app/static/ || true",
     )
-    # Copy configuration files
+    # Copy configuration files (copy=True needed for chmod command)
     .add_local_file(
         str(Path(__file__).parent / "config" / "xorg.conf"),
-        "/etc/X11/xorg.conf"
+        "/etc/X11/xorg.conf",
+        copy=True
     )
     .add_local_file(
         str(Path(__file__).parent / "config" / "supervisord.conf"),
-        "/etc/supervisor/conf.d/gaming.conf"
+        "/etc/supervisor/conf.d/gaming.conf",
+        copy=True
     )
     .add_local_file(
         str(Path(__file__).parent / "config" / "sunshine.conf"),
-        "/etc/sunshine/sunshine.conf"
+        "/etc/sunshine/sunshine.conf",
+        copy=True
     )
     .add_local_file(
         str(Path(__file__).parent / "scripts" / "start-services.sh"),
-        "/app/start-services.sh"
+        "/app/start-services.sh",
+        copy=True
     )
     .run_commands("chmod +x /app/start-services.sh")
     # Set environment variables
