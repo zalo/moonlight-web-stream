@@ -32,18 +32,23 @@ impl VideoDecoder for StreamVideoDecoder {
             stream_info.video = Some(setup);
         }
 
-        {
-            stream.runtime.clone().block_on(async move {
-                let mut sender = stream.transport_sender.lock().await;
+        // Setup video on all peer transports
+        stream.runtime.clone().block_on(async move {
+            let transports = stream.peer_transports.read().await;
+            if transports.is_empty() {
+                error!("Failed to setup video because no transports are connected!");
+                return -1;
+            }
 
-                if let Some(sender) = sender.as_mut() {
-                    sender.setup_video(setup).await
-                } else {
-                    error!("Failed to setup video because of missing transport!");
-                    -1
+            let mut result = 0i32;
+            for (_peer_id, transport) in transports.iter() {
+                let r = transport.sender.setup_video(setup).await;
+                if r != 0 {
+                    result = r;
                 }
-            })
-        }
+            }
+            result
+        })
     }
 
     fn start(&mut self) {}
@@ -56,27 +61,35 @@ impl VideoDecoder for StreamVideoDecoder {
         };
 
         stream.runtime.clone().block_on(async {
-            let mut sender = stream.transport_sender.lock().await;
+            let transports = stream.peer_transports.read().await;
 
-            if let Some(sender) = sender.as_mut() {
-                let start = Instant::now();
-                let result = match sender.send_video_unit(&unit).await {
-                    Err(err) => {
-                        warn!("Failed to send video decode unit: {err}");
-                        DecodeResult::Ok
-                    }
-                    Ok(value) => value,
-                };
-
-                let frame_processing_time = Instant::now() - start;
-                self.stats.analyze(&stream, &unit, frame_processing_time);
-
-                result
-            } else {
-                debug!("Dropping video packet because of missing transport");
-
-                DecodeResult::Ok
+            if transports.is_empty() {
+                debug!("Dropping video packet because no transports are connected");
+                return DecodeResult::Ok;
             }
+
+            let start = Instant::now();
+            let mut final_result = DecodeResult::Ok;
+
+            // Send to all peer transports
+            for (peer_id, transport) in transports.iter() {
+                match transport.sender.send_video_unit(&unit).await {
+                    Err(err) => {
+                        warn!("Failed to send video decode unit to peer {:?}: {err}", peer_id);
+                    }
+                    Ok(result) => {
+                        // Keep the worst result
+                        if result != DecodeResult::Ok {
+                            final_result = result;
+                        }
+                    }
+                }
+            }
+
+            let frame_processing_time = Instant::now() - start;
+            self.stats.analyze(&stream, &unit, frame_processing_time);
+
+            final_result
         })
     }
 

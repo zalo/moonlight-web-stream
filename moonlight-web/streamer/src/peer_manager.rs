@@ -78,6 +78,13 @@ impl PeerManager {
         self.peers.get(&peer_id)
     }
 
+    /// Get queue sizes for a peer
+    pub fn get_peer_queue_sizes(&self, peer_id: PeerId) -> Option<(usize, usize)> {
+        self.peers.get(&peer_id).map(|info| {
+            (info.video_frame_queue_size, info.audio_sample_queue_size)
+        })
+    }
+
     /// Get the player slot for a peer
     #[allow(dead_code)]
     pub fn get_player_slot(&self, peer_id: PeerId) -> Option<PlayerSlot> {

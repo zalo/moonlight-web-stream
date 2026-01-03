@@ -29,14 +29,22 @@ impl AudioDecoder for StreamAudioDecoder {
             stream_info.audio = Some(stream_config.clone());
         }
 
+        // Setup audio on all peer transports
         stream.runtime.clone().block_on(async move {
-            let mut sender = stream.transport_sender.lock().await;
-            if let Some(sender) = sender.as_mut() {
-                sender.setup_audio(audio_config, stream_config).await
-            } else {
-                error!("Failed to setup audio because of missing transport!");
-                -1
+            let transports = stream.peer_transports.read().await;
+            if transports.is_empty() {
+                error!("Failed to setup audio because no transports are connected!");
+                return -1;
             }
+
+            let mut result = 0i32;
+            for (_peer_id, transport) in transports.iter() {
+                let r = transport.sender.setup_audio(audio_config, stream_config.clone()).await;
+                if r != 0 {
+                    result = r;
+                }
+            }
+            result
         })
     }
 
@@ -50,14 +58,18 @@ impl AudioDecoder for StreamAudioDecoder {
         };
 
         stream.runtime.clone().block_on(async move {
-            let mut stream = stream.transport_sender.lock().await;
+            let transports = stream.peer_transports.read().await;
 
-            if let Some(stream) = stream.as_mut() {
-                if let Err(err) = stream.send_audio_sample(data).await {
-                    warn!("Failed to send audio sample: {err}");
+            if transports.is_empty() {
+                debug!("Dropping audio packet because no transports are connected");
+                return;
+            }
+
+            // Send to all peer transports
+            for (peer_id, transport) in transports.iter() {
+                if let Err(err) = transport.sender.send_audio_sample(data).await {
+                    warn!("Failed to send audio sample to peer {:?}: {err}", peer_id);
                 }
-            } else {
-                debug!("Dropping audio packet because of missing transport");
             }
         });
     }

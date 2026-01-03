@@ -21,7 +21,7 @@ use crate::{
     config::WebRtcConfig,
 };
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamerConfig {
     pub webrtc: WebRtcConfig,
     pub log_level: LevelFilter,
@@ -32,7 +32,7 @@ pub struct StreamerConfig {
 pub struct PeerId(pub u64);
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerIpcMessage {
     Init {
         config: StreamerConfig,

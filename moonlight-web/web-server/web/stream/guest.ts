@@ -9,8 +9,10 @@ import { BIG_BUFFER } from "./buffer.js"
 import { defaultStreamInputConfig, StreamInput } from "./input.js"
 import { Logger, LogMessageInfo } from "./log.js"
 import { StreamStats } from "./stats.js"
+import { Transport, TransportShutdown } from "./transport/index.js"
 import { WebSocketTransport } from "./transport/web_socket.js"
-import { allVideoCodecs, getSelectedVideoCodec, VideoCodecSupport } from "./video.js"
+import { WebRTCTransport } from "./transport/webrtc.js"
+import { allVideoCodecs, andVideoCodecs, createSupportedVideoFormatsBits, emptyVideoCodecs, getSelectedVideoCodec, hasAnyCodec, VideoCodecSupport } from "./video.js"
 import { VideoRenderer } from "./video/index.js"
 import { buildVideoPipeline, VideoPipelineOptions } from "./video/pipeline.js"
 import { getStreamerSize, InfoEvent, InfoEventListener } from "./index.js"
@@ -54,7 +56,7 @@ export class GuestStream implements Component {
     private stats: StreamStats
 
     private streamerSize: [number, number]
-    private transport: WebSocketTransport | null = null
+    private transport: Transport | null = null
 
     // Room state
     private roomInfo: RoomInfo | null = null
@@ -200,75 +202,233 @@ export class GuestStream implements Component {
                 detail: { type: "guestsKeyboardMouseEnabled", enabled: this.guestsKeyboardMouseEnabled }
             })
             this.eventTarget.dispatchEvent(event)
+        } else if (typeof message === "object" && "WebRtc" in message) {
+            // Handle WebRTC signaling messages
+            const webrtcMessage = message.WebRtc
+            if (this.transport instanceof WebRTCTransport) {
+                this.transport.onReceiveMessage(webrtcMessage)
+            } else {
+                this.debugLog(`Received WebRTC message but transport is currently ${this.transport?.implementationName}`)
+            }
         }
     }
 
     private async startConnection() {
-        this.debugLog("Using WebSocket transport for guest connection")
+        this.debugLog(`Using transport: ${this.settings.dataTransport}`)
 
-        this.sendWsMessage({ SetTransport: "WebSocket" })
+        if (this.settings.dataTransport == "auto") {
+            let shutdownReason = await this.tryWebRTCTransport()
 
-        const transport = new WebSocketTransport(this.ws, BIG_BUFFER, this.logger)
+            if (shutdownReason == "failednoconnect") {
+                this.debugLog("Failed to establish WebRTC connection. Falling back to Web Socket transport.")
+                await this.tryWebSocketTransport()
+            }
+        } else if (this.settings.dataTransport == "webrtc") {
+            await this.tryWebRTCTransport()
+        } else if (this.settings.dataTransport == "websocket") {
+            await this.tryWebSocketTransport()
+        }
+
+        this.debugLog("Tried all configured transport options but no connection was possible", { type: "fatal" })
+    }
+
+    private setTransport(transport: Transport) {
+        if (this.transport) {
+            this.transport.close()
+        }
+
         this.transport = transport
 
-        this.input.setTransport(transport)
-        this.stats.setTransport(transport)
+        this.input.setTransport(this.transport)
+        this.stats.setTransport(this.transport)
+    }
 
-        // Setup video pipeline for data transport
-        const videoCodecHint = getVideoCodecHint(this.settings)
-        const videoSettings: VideoPipelineOptions = {
-            supportedVideoCodecs: videoCodecHint,
-            canvasRenderer: this.settings.canvasRenderer,
-            forceVideoElementRenderer: this.settings.forceVideoElementRenderer
+    private async tryWebRTCTransport(): Promise<TransportShutdown> {
+        this.debugLog("Trying WebRTC transport")
+
+        this.sendWsMessage({
+            SetTransport: "WebRTC"
+        })
+
+        if (!this.iceServers) {
+            this.debugLog(`Failed to try WebRTC Transport: no ice servers available`)
+            return "failednoconnect"
         }
 
-        const { videoRenderer, supportedCodecs, error: videoError } = await buildVideoPipeline("data", videoSettings, this.logger)
-        if (videoError || !videoRenderer) {
-            this.debugLog("Failed to create video pipeline!", { type: "fatal" })
-            return
+        const transport = new WebRTCTransport(this.logger)
+        transport.onsendmessage = (message) => this.sendWsMessage({ WebRtc: message })
+
+        transport.initPeer({
+            iceServers: this.iceServers
+        })
+        this.setTransport(transport)
+
+        // Wait for negotiation
+        const result = await (new Promise((resolve, _reject) => {
+            transport.onconnect = () => resolve(true)
+            transport.onclose = () => resolve(false)
+        }))
+        this.debugLog(`WebRTC negotiation success: ${result}`)
+
+        if (!result) {
+            return "failednoconnect"
         }
 
-        videoRenderer.mount(this.divElement)
-        this.videoRenderer = videoRenderer
+        const videoCodecSupport = await this.createPipelines()
+        if (!videoCodecSupport) {
+            this.debugLog("No video pipeline was found for the codec that was specified.", { type: "fatalDescription" })
 
-        // Setup audio pipeline
-        const { audioPlayer, error: audioError } = await buildAudioPipeline("data", this.settings, this.logger)
-        if (!audioError && audioPlayer) {
-            audioPlayer.mount(this.divElement)
-            this.audioPlayer = audioPlayer
-        } else {
-            showErrorPopup("Failed to create audio player")
-        }
-
-        // Setup transport channels for video/audio
-        await transport.setupHostVideo({ type: ["data"] })
-        await transport.setupHostAudio({ type: ["data"] })
-
-        const videoChannel = transport.getChannel(TransportChannelId.HOST_VIDEO)
-        if (videoChannel.type == "data") {
-            videoChannel.addReceiveListener((data) => {
-                if (this.videoRenderer && 'submitPacket' in this.videoRenderer) {
-                    (this.videoRenderer as any).submitPacket(data)
-                }
-            })
-        }
-
-        const audioChannel = transport.getChannel(TransportChannelId.HOST_AUDIO)
-        if (audioChannel.type == "data" && this.audioPlayer) {
-            audioChannel.addReceiveListener((data) => {
-                if (this.audioPlayer && 'decodeAndPlay' in this.audioPlayer) {
-                    (this.audioPlayer as any).decodeAndPlay({
-                        durationMicroseconds: 0,
-                        timestampMicroseconds: 0,
-                        data
-                    })
-                }
-            })
+            await transport.close()
+            return "failednoconnect"
         }
 
         // Guests don't send StartStream - they join an existing stream
         // The server will send ConnectionComplete when ready
-        this.debugLog("Transport ready, waiting for ConnectionComplete from server")
+        this.debugLog("WebRTC transport ready, waiting for ConnectionComplete from server")
+
+        return new Promise((resolve, _reject) => {
+            transport.onclose = (shutdown) => {
+                resolve(shutdown)
+            }
+        })
+    }
+
+    private async tryWebSocketTransport(): Promise<TransportShutdown | undefined> {
+        this.debugLog("Trying Web Socket transport")
+
+        this.sendWsMessage({
+            SetTransport: "WebSocket"
+        })
+
+        const transport = new WebSocketTransport(this.ws, BIG_BUFFER, this.logger)
+
+        this.setTransport(transport)
+
+        const videoCodecSupport = await this.createPipelines()
+        if (!videoCodecSupport) {
+            this.debugLog("Failed to start stream because no video pipeline with support for the specified codec was found!", { type: "fatal" })
+            return
+        }
+
+        // Guests don't send StartStream - they join an existing stream
+        // The server will send ConnectionComplete when ready
+        this.debugLog("WebSocket transport ready, waiting for ConnectionComplete from server")
+
+        return new Promise((resolve, _reject) => {
+            transport.onclose = (shutdown) => {
+                resolve(shutdown)
+            }
+        })
+    }
+
+    private async createPipelines(): Promise<VideoCodecSupport | null> {
+        if (!this.transport) {
+            this.debugLog("Failed to create pipelines without transport")
+            return null
+        }
+
+        // Create video pipeline
+        const codecHint = getVideoCodecHint(this.settings)
+        this.debugLog(`Codec Hint by the user: ${JSON.stringify(codecHint)}`)
+
+        if (!hasAnyCodec(codecHint)) {
+            this.debugLog("Couldn't find any supported video format.", { type: "fatalDescription" })
+            return null
+        }
+
+        const transportCodecSupport = await this.transport.setupHostVideo({
+            type: ["videotrack", "data"]
+        })
+        this.debugLog(`Transport supports these video codecs: ${JSON.stringify(transportCodecSupport)}`)
+
+        const videoSettings: VideoPipelineOptions = {
+            supportedVideoCodecs: andVideoCodecs(codecHint, transportCodecSupport),
+            canvasRenderer: this.settings.canvasRenderer,
+            forceVideoElementRenderer: this.settings.forceVideoElementRenderer
+        }
+
+        const video = this.transport.getChannel(TransportChannelId.HOST_VIDEO)
+        if (video.type == "videotrack") {
+            const { videoRenderer, supportedCodecs, error } = await buildVideoPipeline("videotrack", videoSettings, this.logger)
+
+            if (error || !videoRenderer) {
+                this.debugLog("Failed to create video pipeline!", { type: "fatal" })
+                return null
+            }
+
+            videoRenderer.mount(this.divElement)
+
+            video.addTrackListener((track) => {
+                videoRenderer.setTrack(track)
+            })
+
+            this.videoRenderer = videoRenderer
+        } else if (video.type == "data") {
+            const { videoRenderer, supportedCodecs, error } = await buildVideoPipeline("data", videoSettings, this.logger)
+
+            if (error || !videoRenderer) {
+                this.debugLog("Failed to create video pipeline!", { type: "fatal" })
+                return null
+            }
+
+            videoRenderer.mount(this.divElement)
+
+            video.addReceiveListener((data) => {
+                videoRenderer.submitPacket(data)
+            })
+
+            this.videoRenderer = videoRenderer
+        } else {
+            this.debugLog(`Failed to create video pipeline with transport channel of type ${video.type}`)
+            return null
+        }
+
+        // Create audio pipeline
+        await this.transport.setupHostAudio({
+            type: ["audiotrack", "data"]
+        })
+
+        const audio = this.transport.getChannel(TransportChannelId.HOST_AUDIO)
+        if (audio.type == "audiotrack") {
+            const { audioPlayer, error } = await buildAudioPipeline("audiotrack", this.settings, this.logger)
+
+            if (error || !audioPlayer) {
+                showErrorPopup("Failed to create audio player")
+            } else {
+                audioPlayer.mount(this.divElement)
+                audio.addTrackListener((track) => audioPlayer.setTrack(track))
+                this.audioPlayer = audioPlayer
+            }
+        } else if (audio.type == "data") {
+            const { audioPlayer, error } = await buildAudioPipeline("data", this.settings, this.logger)
+
+            if (error || !audioPlayer) {
+                showErrorPopup("Failed to create audio player")
+            } else {
+                audioPlayer.mount(this.divElement)
+                audio.addReceiveListener((data) => {
+                    audioPlayer.decodeAndPlay({
+                        durationMicroseconds: 0,
+                        timestampMicroseconds: 0,
+                        data
+                    })
+                })
+                this.audioPlayer = audioPlayer
+            }
+        } else {
+            this.debugLog(`Cannot find audio pipeline for transport type "${audio.type}"`)
+        }
+
+        const videoPipeline = `${this.transport.getChannel(TransportChannelId.HOST_VIDEO).type} (transport) -> ${this.videoRenderer?.implementationName} (renderer)`
+        this.debugLog(`Using video pipeline: ${videoPipeline}`)
+
+        const audioPipeline = `${this.transport.getChannel(TransportChannelId.HOST_AUDIO).type} (transport) -> ${this.audioPlayer?.implementationName} (player)`
+        this.debugLog(`Using audio pipeline: ${audioPipeline}`)
+
+        this.stats.setVideoPipelineName(videoPipeline)
+        this.stats.setAudioPipelineName(audioPipeline)
+
+        return transportCodecSupport
     }
 
     private onWsOpen() {
