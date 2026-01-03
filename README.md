@@ -3,6 +3,18 @@
 An unofficial [Moonlight Client](https://moonlight-stream.org/) allowing you to stream your pc to the Web.
 It hosts a Web Server which will forward [Sunshine](https://docs.lizardbyte.dev/projects/sunshine/latest/) traffic to a Browser using the [WebRTC Api](https://webrtc.org/).
 
+## Multi-Peer Room Support (New!)
+
+Moonlight Web now supports **multiplayer streaming sessions** where multiple users can connect to the same game stream simultaneously:
+
+- **Room-based sessions**: When starting a stream, a shareable 6-character room code is generated (e.g., `A3K9B2`)
+- **Up to 4 players**: Each player is assigned a slot (Player 1-4) with their own gamepad input mapped to the corresponding controller slot
+- **Host controls**: Player 1 (the host) has full keyboard/mouse control by default; guest keyboard/mouse access can be toggled
+- **Independent gamepad mapping**: Each player's browser gamepad is automatically mapped to their assigned player slot in the game
+- **Real-time player management**: See who's connected, their player slot, and manage the session
+
+This enables couch co-op and local multiplayer games to be played with friends over the internet, each connecting from their own browser.
+
 ![An image displaying: PC with sunshine and moonlight web installed, a browser making requests to it](/readme/structure.png)
 
 ## Overview
