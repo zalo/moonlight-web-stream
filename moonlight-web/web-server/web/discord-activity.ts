@@ -254,7 +254,7 @@ function sendWsMessage(message: StreamClientMessage): void {
 function handleServerMessage(message: StreamServerMessage): void {
     console.log("Server message:", message);
 
-    if ("SpectatorJoined" in message) {
+    if (typeof message === "object" && "SpectatorJoined" in message) {
         const { room } = message.SpectatorJoined;
         state.isConnected = true;
         state.role = "Spectator";
@@ -264,7 +264,7 @@ function handleServerMessage(message: StreamServerMessage): void {
         hideLoading();
 
         console.log("Joined as spectator:", room);
-    } else if ("RoomJoined" in message) {
+    } else if (typeof message === "object" && "RoomJoined" in message) {
         const { room, player_slot } = message.RoomJoined;
         state.isConnected = true;
         state.role = "Player";
@@ -275,14 +275,14 @@ function handleServerMessage(message: StreamServerMessage): void {
         hideLoading();
 
         console.log("Joined as player:", room, "slot:", player_slot);
-    } else if ("Setup" in message) {
+    } else if (typeof message === "object" && "Setup" in message) {
         // ICE servers received - initialize WebRTC
         state.iceServers = message.Setup.ice_servers;
         console.log("Received ICE servers:", state.iceServers);
         initializeWebRTC();
-    } else if ("WebRtc" in message) {
+    } else if (typeof message === "object" && "WebRtc" in message) {
         handleWebRtcSignaling(message.WebRtc);
-    } else if ("PromotedToPlayer" in message) {
+    } else if (typeof message === "object" && "PromotedToPlayer" in message) {
         const { player_slot, room } = message.PromotedToPlayer;
         state.role = "Player";
         state.playerSlot = player_slot;
@@ -292,7 +292,7 @@ function handleServerMessage(message: StreamServerMessage): void {
         enableInput();
 
         console.log("Promoted to player:", player_slot);
-    } else if ("DemotedToSpectator" in message) {
+    } else if (typeof message === "object" && "DemotedToSpectator" in message) {
         const { room } = message.DemotedToSpectator;
         state.role = "Spectator";
         state.playerSlot = null;
@@ -302,7 +302,7 @@ function handleServerMessage(message: StreamServerMessage): void {
         disableInput();
 
         console.log("Demoted to spectator");
-    } else if ("PlayerSlotRequestResult" in message) {
+    } else if (typeof message === "object" && "PlayerSlotRequestResult" in message) {
         const { granted, player_slot, reason } = message.PlayerSlotRequestResult;
         if (granted && player_slot) {
             state.role = "Player";
@@ -313,18 +313,18 @@ function handleServerMessage(message: StreamServerMessage): void {
             // Could show a toast notification here
         }
         updateUI();
-    } else if ("ParticipantsUpdated" in message) {
+    } else if (typeof message === "object" && "ParticipantsUpdated" in message) {
         const { participants } = message.ParticipantsUpdated;
         state.participants = participants;
         updateParticipantsList();
-    } else if ("RoomUpdated" in message) {
+    } else if (typeof message === "object" && "RoomUpdated" in message) {
         const { room } = message.RoomUpdated;
         state.participants = room.participants;
         updateParticipantsList();
-    } else if ("ConnectionComplete" in message) {
+    } else if (typeof message === "object" && "ConnectionComplete" in message) {
         state.capabilities = message.ConnectionComplete.capabilities;
         console.log("Stream connection complete:", message.ConnectionComplete);
-    } else if ("RoomClosed" in message) {
+    } else if (message === "RoomClosed") {
         state.isConnected = false;
         updateLoadingState("Gaming session ended");
         elements.loadingOverlay.classList.remove("hidden");
