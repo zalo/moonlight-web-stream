@@ -8,10 +8,12 @@ jobs:
     strategy:
       matrix:
         arch:
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             name: x86_64
-          - runner: ubuntu-24.04-arm
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-22.04-arm
             name: aarch64
+            target: aarch64-unknown-linux-musl
 
     name: ${{ matrix.arch.name }}
     runs-on: ${{ matrix.arch.runner }}
@@ -23,15 +25,22 @@ jobs:
     - uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: nightly
+        target: ${{ matrix.arch.target }}
     - uses: actions/setup-node@v6
       with:
         node-version: 24
-    - run: sudo apt-get install -y clang
+    - name: Install musl and build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y musl-tools musl-dev clang cmake
 
 
     - name: Build
+      env:
+        CC: musl-gcc
+        OPENSSL_STATIC: "1"
       run: |
-       cargo build --release
+       cargo build --release --target ${{ matrix.arch.target }}
        pushd moonlight-web/web-server
        npm install
        npm run build
@@ -42,8 +51,8 @@ jobs:
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: moonlight-web-${{ matrix.arch.name }}-unknown-linux-gnu
+        name: moonlight-web-${{ matrix.arch.name }}-unknown-linux-musl
         path: |
-          target/release/streamer
-          target/release/web-server
+          target/${{ matrix.arch.target }}/release/streamer
+          target/${{ matrix.arch.target }}/release/web-server
           moonlight-web/web-server/static
