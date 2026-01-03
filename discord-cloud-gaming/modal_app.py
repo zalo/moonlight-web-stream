@@ -163,7 +163,7 @@ def fetch_cloudflare_turn_credentials(key_id: str, api_token: str, ttl: int = 86
             timeout=10
         )
 
-        if response.status_code == 200:
+        if response.status_code in (200, 201):  # 201 = Created is also success
             data = response.json()
             # Cloudflare returns iceServers array
             if "iceServers" in data:
@@ -389,7 +389,7 @@ def cloud_gaming_server():
 
     # Run web server
     subprocess.run(
-        ["/app/web-server", "--config", config_path],
+        ["/app/web-server", "--config-path", config_path],
         env=env,
         cwd="/app"
     )
