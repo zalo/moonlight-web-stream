@@ -131,7 +131,7 @@ class GuestViewerApp implements Component {
         window.addEventListener("gamepaddisconnected", this.onGamepadDisconnect.bind(this))
         for (const gamepad of navigator.getGamepads()) {
             if (gamepad != null) {
-                this.onGamepadAdd(gamepad)
+                this.stream?.getInput().onGamepadConnect(gamepad)
             }
         }
     }
@@ -140,15 +140,23 @@ class GuestViewerApp implements Component {
         element.addEventListener("keydown", this.onKeyDown.bind(this), { passive: false })
         element.addEventListener("keyup", this.onKeyUp.bind(this), { passive: false })
 
-        element.addEventListener("mousedown", this.onMouseButtonDown.bind(this), { passive: false })
-        element.addEventListener("mouseup", this.onMouseButtonUp.bind(this), { passive: false })
+        element.addEventListener("mousedown", this.onMouseDown.bind(this), { passive: false })
+        element.addEventListener("mouseup", this.onMouseUp.bind(this), { passive: false })
         element.addEventListener("mousemove", this.onMouseMove.bind(this), { passive: false })
-        element.addEventListener("wheel", this.onScroll.bind(this), { passive: false })
+        element.addEventListener("wheel", this.onMouseWheel.bind(this), { passive: false })
 
         element.addEventListener("touchstart", this.onTouchStart.bind(this), { passive: false })
         element.addEventListener("touchend", this.onTouchEnd.bind(this), { passive: false })
         element.addEventListener("touchmove", this.onTouchMove.bind(this), { passive: false })
         element.addEventListener("touchcancel", this.onTouchCancel.bind(this), { passive: false })
+    }
+
+    private getStreamRect(): DOMRect {
+        const renderer = this.stream?.getVideoRenderer()
+        if (renderer) {
+            return renderer.getRect()
+        }
+        return new DOMRect(0, 0, window.innerWidth, window.innerHeight)
     }
 
     startGuestStream(roomId: string, playerName: string | null, settings: Settings, viewerScreenSize: [number, number]) {
@@ -220,40 +228,53 @@ class GuestViewerApp implements Component {
         this.stream?.getInput().onKeyUp(event)
     }
 
-    private onMouseButtonDown(event: MouseEvent) {
-        this.stream?.getInput().onMouseButtonDown(event)
+    private onMouseDown(event: MouseEvent) {
+        event.preventDefault()
+        this.stream?.getInput().onMouseDown(event, this.getStreamRect())
+        event.stopPropagation()
     }
-    private onMouseButtonUp(event: MouseEvent) {
-        this.stream?.getInput().onMouseButtonUp(event)
+    private onMouseUp(event: MouseEvent) {
+        event.preventDefault()
+        this.stream?.getInput().onMouseUp(event)
+        event.stopPropagation()
     }
     private onMouseMove(event: MouseEvent) {
-        this.stream?.getInput().onMouseMove(event)
+        event.preventDefault()
+        this.stream?.getInput().onMouseMove(event, this.getStreamRect())
+        event.stopPropagation()
     }
-    private onScroll(event: WheelEvent) {
-        this.stream?.getInput().onScroll(event)
+    private onMouseWheel(event: WheelEvent) {
+        event.preventDefault()
+        this.stream?.getInput().onMouseWheel(event)
+        event.stopPropagation()
     }
 
     private onTouchStart(event: TouchEvent) {
-        this.stream?.getInput().onTouchStart(event)
+        event.preventDefault()
+        this.stream?.getInput().onTouchStart(event, this.getStreamRect())
+        event.stopPropagation()
     }
     private onTouchEnd(event: TouchEvent) {
-        this.stream?.getInput().onTouchEnd(event)
+        event.preventDefault()
+        this.stream?.getInput().onTouchEnd(event, this.getStreamRect())
+        event.stopPropagation()
     }
     private onTouchMove(event: TouchEvent) {
-        this.stream?.getInput().onTouchMove(event)
+        event.preventDefault()
+        this.stream?.getInput().onTouchMove(event, this.getStreamRect())
+        event.stopPropagation()
     }
     private onTouchCancel(event: TouchEvent) {
-        this.stream?.getInput().onTouchCancel(event)
+        event.preventDefault()
+        this.stream?.getInput().onTouchCancel(event, this.getStreamRect())
+        event.stopPropagation()
     }
 
     private onGamepadConnect(event: GamepadEvent) {
-        this.onGamepadAdd(event.gamepad)
-    }
-    private onGamepadAdd(gamepad: Gamepad) {
-        this.stream?.getInput().addGamepad(gamepad)
+        this.stream?.getInput().onGamepadConnect(event.gamepad)
     }
     private onGamepadDisconnect(event: GamepadEvent) {
-        this.stream?.getInput().removeGamepad(event.gamepad.index)
+        this.stream?.getInput().onGamepadDisconnect(event)
     }
 
     private onPointerLockChange() {
@@ -472,6 +493,13 @@ class GuestViewerSidebar implements Component, Sidebar {
         const config = this.app.getInputConfig()
         config.touchMode = this.touchMode.getValue() as any
         this.app.setInputConfig(config)
+    }
+
+    extended(): void {
+        // Called when sidebar is extended
+    }
+    unextend(): void {
+        // Called when sidebar is unextended
     }
 
     mount(parent: HTMLElement): void {

@@ -538,6 +538,10 @@ export class GuestStream implements Component {
         return this.stats
     }
 
+    getVideoRenderer(): VideoRenderer | null {
+        return this.videoRenderer
+    }
+
     getRoomInfo(): RoomInfo | null {
         return this.roomInfo
     }
