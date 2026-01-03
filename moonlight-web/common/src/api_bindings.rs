@@ -550,7 +550,7 @@ pub enum StreamServerMessage {
     },
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub enum GeneralServerMessage {
     ConnectionStatusUpdate { status: ConnectionStatus },
@@ -577,7 +577,7 @@ impl From<moonlight_common::stream::bindings::ConnectionStatus> for ConnectionSt
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub struct StatsHostProcessingLatency {
     pub min_host_processing_latency_ms: f64,
@@ -585,7 +585,7 @@ pub struct StatsHostProcessingLatency {
     pub avg_host_processing_latency_ms: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub enum StreamerStatsUpdate {
     Rtt {

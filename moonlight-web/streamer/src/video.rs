@@ -77,11 +77,12 @@ impl VideoDecoder for StreamVideoDecoder {
                     Err(err) => {
                         warn!("Failed to send video decode unit to peer {:?}: {err}", peer_id);
                     }
+                    Ok(DecodeResult::Ok) => {
+                        // Success, keep current final_result
+                    }
                     Ok(result) => {
-                        // Keep the worst result
-                        if result != DecodeResult::Ok {
-                            final_result = result;
-                        }
+                        // Keep the worst result (anything that isn't Ok)
+                        final_result = result;
                     }
                 }
             }
