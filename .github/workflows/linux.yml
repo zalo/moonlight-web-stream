@@ -24,6 +24,7 @@ jobs:
       with:
         toolchain: nightly
         cache: false
+        components: rustfmt
     - uses: actions/setup-node@v6
       with:
         node-version: 24
@@ -36,6 +37,8 @@ jobs:
     - name: Build
       env:
         OPENSSL_NO_VENDOR: "1"
+        OPENSSL_ROOT_DIR: /usr
+        OPENSSL_INCLUDE_DIR: /usr/include
       run: |
        cargo build --release
        pushd moonlight-web/web-server
