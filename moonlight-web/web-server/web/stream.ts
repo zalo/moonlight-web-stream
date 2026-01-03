@@ -191,6 +191,21 @@ class ViewerApp implements Component {
             document.title = `Stream: ${app.title}`
         } else if (data.type == "connectionComplete") {
             this.sidebar.onCapabilitiesChange(data.capabilities)
+        } else if (data.type == "roomCreated" || data.type == "roomJoined") {
+            const room = data.room
+            const playerSlot = data.playerSlot
+            const isHost = playerSlot === 0
+            this.sidebar.updateRoomInfo(room.room_id, playerSlot, room.players.length, room.max_players, isHost)
+        } else if (data.type == "roomUpdated") {
+            const room = data.room
+            const stream = this.stream
+            const playerSlot = stream?.getPlayerSlot() ?? 0
+            const isHost = stream?.isHost() ?? false
+            this.sidebar.updateRoomInfo(room.room_id, playerSlot, room.players.length, room.max_players, isHost)
+        } else if (data.type == "guestsKeyboardMouseEnabled") {
+            this.sidebar.updateGuestsKeyboardMouseEnabled(data.enabled)
+        } else if (data.type == "roomClosed") {
+            this.sidebar.hideRoomSection()
         }
     }
 
@@ -631,6 +646,14 @@ class ViewerSidebar implements Component, Sidebar {
     private mouseMode: SelectComponent
     private touchMode: SelectComponent
 
+    // Multiplayer UI elements
+    private roomSection = document.createElement("div")
+    private roomIdDisplay = document.createElement("div")
+    private playerSlotDisplay = document.createElement("div")
+    private playerCountDisplay = document.createElement("div")
+    private guestKeyboardMouseToggle = document.createElement("button")
+    private guestsKeyboardMouseEnabled = false
+
     constructor(app: ViewerApp) {
         this.app = app
 
@@ -719,10 +742,59 @@ class ViewerSidebar implements Component, Sidebar {
         })
         this.touchMode.addChangeListener(this.onTouchModeChange.bind(this))
         this.touchMode.mount(this.div)
+
+        // Room/Multiplayer section
+        this.roomSection.classList.add("sidebar-stream-room")
+        this.roomSection.style.display = "none" // Hidden until room is created/joined
+        this.div.appendChild(this.roomSection)
+
+        const roomHeader = document.createElement("h4")
+        roomHeader.innerText = "Room"
+        roomHeader.style.margin = "8px 0 4px 0"
+        this.roomSection.appendChild(roomHeader)
+
+        this.roomIdDisplay.classList.add("sidebar-room-info")
+        this.roomSection.appendChild(this.roomIdDisplay)
+
+        this.playerSlotDisplay.classList.add("sidebar-room-info")
+        this.roomSection.appendChild(this.playerSlotDisplay)
+
+        this.playerCountDisplay.classList.add("sidebar-room-info")
+        this.roomSection.appendChild(this.playerCountDisplay)
+
+        this.guestKeyboardMouseToggle.innerText = "Enable Guest KB/Mouse"
+        this.guestKeyboardMouseToggle.style.display = "none" // Only visible for host
+        this.guestKeyboardMouseToggle.addEventListener("click", () => {
+            const newState = !this.guestsKeyboardMouseEnabled
+            this.app.getStream()?.setGuestsKeyboardMouseEnabled(newState)
+        })
+        this.roomSection.appendChild(this.guestKeyboardMouseToggle)
     }
 
     onCapabilitiesChange(capabilities: StreamCapabilities) {
         this.touchMode.setOptionEnabled("touch", capabilities.touch)
+    }
+
+    // Room UI update methods
+    updateRoomInfo(roomId: string, playerSlot: number, playerCount: number, maxPlayers: number, isHost: boolean) {
+        this.roomSection.style.display = "block"
+        this.roomIdDisplay.innerText = `Room: ${roomId}`
+        this.playerSlotDisplay.innerText = `You: Player ${playerSlot + 1}${isHost ? " (Host)" : ""}`
+        this.playerCountDisplay.innerText = `Players: ${playerCount}/${maxPlayers}`
+
+        // Show/hide guest keyboard/mouse toggle based on host status
+        this.guestKeyboardMouseToggle.style.display = isHost ? "block" : "none"
+    }
+
+    updateGuestsKeyboardMouseEnabled(enabled: boolean) {
+        this.guestsKeyboardMouseEnabled = enabled
+        this.guestKeyboardMouseToggle.innerText = enabled
+            ? "Disable Guest KB/Mouse"
+            : "Enable Guest KB/Mouse"
+    }
+
+    hideRoomSection() {
+        this.roomSection.style.display = "none"
     }
 
     getScreenKeyboard(): ScreenKeyboard {

@@ -380,6 +380,16 @@ async fn handle_init_room(
         })
         .await;
 
+    // Register the host peer with the streamer
+    ipc_sender
+        .send(ServerIpcMessage::PeerConnected {
+            peer_id,
+            player_slot,
+            video_frame_queue_size,
+            audio_sample_queue_size,
+        })
+        .await;
+
     // Handle WebSocket messages from this client
     handle_client_websocket(
         web_app,
