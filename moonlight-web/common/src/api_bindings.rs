@@ -471,7 +471,7 @@ impl Display for RtcIceServer {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub struct StreamCapabilities {
     pub touch: bool,
