@@ -29,6 +29,8 @@ pub struct Config {
     pub log: LogConfig,
     #[serde(default)]
     pub default_settings: Option<Value>,
+    #[serde(default)]
+    pub discord: Option<DiscordConfig>,
 }
 
 impl Default for Config {
@@ -41,8 +43,22 @@ impl Default for Config {
             webrtc: Default::default(),
             log: Default::default(),
             default_settings: Default::default(),
+            discord: Default::default(),
         }
     }
+}
+
+// -- Discord Config
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscordConfig {
+    /// Discord Application Client ID
+    pub client_id: String,
+    /// Discord Application Client Secret
+    pub client_secret: String,
+    /// Redirect URI for OAuth2 (usually your app's URL)
+    #[serde(default)]
+    pub redirect_uri: Option<String>,
 }
 
 // -- Log

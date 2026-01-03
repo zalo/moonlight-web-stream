@@ -732,20 +732,35 @@ impl StreamConnection {
             ServerIpcMessage::PeerConnected {
                 peer_id,
                 player_slot,
+                role,
                 video_frame_queue_size,
                 audio_sample_queue_size,
             } => {
                 info!(
-                    "Peer {:?} connected as player slot {}",
-                    peer_id, player_slot.0
+                    "Peer {:?} connected as {:?} (slot: {:?})",
+                    peer_id, role, player_slot
                 );
                 let mut peer_manager = self.peer_manager.write().await;
                 peer_manager.add_peer(
                     peer_id,
                     player_slot,
+                    role,
                     video_frame_queue_size,
                     audio_sample_queue_size,
                 );
+                return;
+            }
+            ServerIpcMessage::PeerRoleChanged {
+                peer_id,
+                new_role,
+                player_slot,
+            } => {
+                info!(
+                    "Peer {:?} role changed to {:?} (slot: {:?})",
+                    peer_id, new_role, player_slot
+                );
+                let mut peer_manager = self.peer_manager.write().await;
+                peer_manager.update_peer_role(peer_id, new_role, player_slot);
                 return;
             }
             ServerIpcMessage::PeerDisconnected { peer_id } => {

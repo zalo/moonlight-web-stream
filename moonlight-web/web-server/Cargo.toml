@@ -33,6 +33,7 @@ thiserror.workspace = true
 async-trait.workspace = true
 hex.workspace = true
 rand.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls", "json"] }
 
 [lints]
 workspace = true

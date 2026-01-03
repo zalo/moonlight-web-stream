@@ -33,6 +33,7 @@ use common::api_bindings::{
 
 pub mod admin;
 pub mod auth;
+pub mod discord;
 pub mod stream;
 
 pub mod response_streaming;
@@ -325,5 +326,11 @@ pub fn api_service() -> impl HttpServiceFactory {
             patch_user,
             delete_user,
             list_users
+        ])
+        .service(services![
+            // -- Discord Activity
+            discord::discord_token_exchange,
+            discord::get_discord_room,
+            discord::create_discord_room
         ])
 }

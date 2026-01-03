@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
 use common::{
-    api_bindings::PlayerSlot,
+    api_bindings::{PlayerSlot, RoomRole},
     ipc::PeerId,
 };
 use log::{debug, warn};
 
-/// Manages the mapping between peers and their player slots
+/// Manages the mapping between peers and their player slots/roles
 #[derive(Debug, Default)]
 pub struct PeerManager {
-    /// Map from peer ID to player slot
+    /// Map from peer ID to peer info
     peers: HashMap<PeerId, PeerInfo>,
     /// Whether guests (non-host players) can use keyboard/mouse
     guests_keyboard_mouse_enabled: bool,
@@ -17,7 +17,10 @@ pub struct PeerManager {
 
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
-    pub player_slot: PlayerSlot,
+    /// Player slot if this peer is a player (None for spectators)
+    pub player_slot: Option<PlayerSlot>,
+    /// Role in the room
+    pub role: RoomRole,
     #[allow(dead_code)]
     pub video_frame_queue_size: usize,
     #[allow(dead_code)]
@@ -44,26 +47,61 @@ impl PeerManager {
         self.guests_keyboard_mouse_enabled
     }
 
-    /// Add a new peer with their assigned player slot
+    /// Add a new peer with their assigned player slot and role
     pub fn add_peer(
         &mut self,
         peer_id: PeerId,
-        player_slot: PlayerSlot,
+        player_slot: Option<PlayerSlot>,
+        role: RoomRole,
         video_frame_queue_size: usize,
         audio_sample_queue_size: usize,
     ) {
         debug!(
-            "Adding peer {:?} as player slot {}",
-            peer_id, player_slot.0
+            "Adding peer {:?} as {:?} (slot: {:?})",
+            peer_id, role, player_slot
         );
         self.peers.insert(
             peer_id,
             PeerInfo {
                 player_slot,
+                role,
                 video_frame_queue_size,
                 audio_sample_queue_size,
             },
         );
+    }
+
+    /// Update a peer's role (e.g., spectator promoted to player)
+    pub fn update_peer_role(
+        &mut self,
+        peer_id: PeerId,
+        new_role: RoomRole,
+        player_slot: Option<PlayerSlot>,
+    ) {
+        if let Some(info) = self.peers.get_mut(&peer_id) {
+            debug!(
+                "Updating peer {:?} role from {:?} to {:?} (slot: {:?})",
+                peer_id, info.role, new_role, player_slot
+            );
+            info.role = new_role;
+            info.player_slot = player_slot;
+        }
+    }
+
+    /// Check if a peer is a spectator
+    pub fn is_spectator(&self, peer_id: PeerId) -> bool {
+        self.peers
+            .get(&peer_id)
+            .map(|info| info.role.is_spectator())
+            .unwrap_or(false)
+    }
+
+    /// Check if a peer can provide input (not a spectator)
+    pub fn can_input(&self, peer_id: PeerId) -> bool {
+        self.peers
+            .get(&peer_id)
+            .map(|info| info.role.can_input())
+            .unwrap_or(false)
     }
 
     /// Remove a peer
@@ -85,23 +123,31 @@ impl PeerManager {
         })
     }
 
-    /// Get the player slot for a peer
+    /// Get the player slot for a peer (None if spectator or not found)
     #[allow(dead_code)]
     pub fn get_player_slot(&self, peer_id: PeerId) -> Option<PlayerSlot> {
-        self.peers.get(&peer_id).map(|info| info.player_slot)
+        self.peers.get(&peer_id).and_then(|info| info.player_slot)
     }
 
     /// Check if a peer can use keyboard/mouse
-    /// Player 1 (host) can always use it; guests can only if explicitly enabled
+    /// Only players can use KB/mouse. Spectators never can.
+    /// Among players: Host always can; guests can only if explicitly enabled
     pub fn can_use_keyboard_mouse(&self, peer_id: PeerId) -> bool {
         self.peers
             .get(&peer_id)
             .map(|info| {
-                if info.player_slot.is_host() {
-                    true // Host can always use keyboard/mouse
-                } else {
-                    self.guests_keyboard_mouse_enabled
+                // Spectators can never use keyboard/mouse
+                if info.role.is_spectator() {
+                    return false;
                 }
+
+                // Host can always use keyboard/mouse
+                if info.role.is_host() {
+                    return true;
+                }
+
+                // Other players can only if enabled
+                self.guests_keyboard_mouse_enabled
             })
             .unwrap_or(false)
     }
@@ -118,8 +164,14 @@ impl PeerManager {
     /// - Player 4's gamepad 0 -> slot 3
     ///
     /// Each player only gets one gamepad slot.
+    /// Spectators cannot use gamepads.
     pub fn map_gamepad_id(&self, peer_id: PeerId, browser_gamepad_id: u8) -> Option<u8> {
         let info = self.peers.get(&peer_id)?;
+
+        // Spectators cannot use gamepads
+        if info.role.is_spectator() {
+            return None;
+        }
 
         // Only the first gamepad from each player is used
         if browser_gamepad_id != 0 {
@@ -130,7 +182,8 @@ impl PeerManager {
             return None;
         }
 
-        Some(info.player_slot.gamepad_slot())
+        // Get the player slot (should exist since we checked for spectator)
+        info.player_slot.map(|slot| slot.gamepad_slot())
     }
 
     /// Get all peer IDs

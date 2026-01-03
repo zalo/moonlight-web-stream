@@ -308,7 +308,49 @@ impl PlayerSlot {
     }
 }
 
-/// Information about a player in a room
+/// Role of a participant in a room
+#[derive(Serialize, Deserialize, Debug, TS, Clone, Copy, PartialEq, Eq)]
+#[ts(export, export_to = EXPORT_PATH)]
+pub enum RoomRole {
+    /// Host - Player 1 who started the room, has full control
+    Host,
+    /// Player - Active player with gamepad input (slots 2-4)
+    Player,
+    /// Spectator - Can watch but cannot provide input until promoted
+    Spectator,
+}
+
+impl RoomRole {
+    pub fn can_input(&self) -> bool {
+        matches!(self, RoomRole::Host | RoomRole::Player)
+    }
+
+    pub fn is_host(&self) -> bool {
+        matches!(self, RoomRole::Host)
+    }
+
+    pub fn is_spectator(&self) -> bool {
+        matches!(self, RoomRole::Spectator)
+    }
+}
+
+/// Information about a participant in a room (player or spectator)
+#[derive(Serialize, Deserialize, Debug, TS, Clone)]
+#[ts(export, export_to = EXPORT_PATH)]
+pub struct RoomParticipant {
+    /// Player slot (0-3) if a player, None if spectator
+    pub slot: Option<PlayerSlot>,
+    /// Role in the room
+    pub role: RoomRole,
+    /// Display name
+    pub name: Option<String>,
+    /// Discord user ID (if using Discord auth)
+    pub discord_user_id: Option<String>,
+    /// Discord avatar URL
+    pub discord_avatar: Option<String>,
+}
+
+/// Information about a player in a room (legacy compatibility)
 #[derive(Serialize, Deserialize, Debug, TS, Clone)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub struct RoomPlayer {
@@ -327,6 +369,10 @@ pub struct RoomInfo {
     pub app_name: String,
     pub players: Vec<RoomPlayer>,
     pub max_players: u8,
+    /// All participants including spectators
+    pub participants: Vec<RoomParticipant>,
+    /// Number of spectators currently watching
+    pub spectator_count: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, TS, Clone, Copy, PartialEq, Eq)]
@@ -426,11 +472,32 @@ pub enum StreamClientMessage {
         video_frame_queue_size: usize,
         audio_sample_queue_size: usize,
     },
+    /// Join an existing room as a spectator (watch-only, no input)
+    JoinAsSpectator {
+        room_id: String,
+        player_name: Option<String>,
+        discord_user_id: Option<String>,
+        discord_avatar: Option<String>,
+        video_frame_queue_size: usize,
+        audio_sample_queue_size: usize,
+    },
+    /// Request to become a player (spectator -> player promotion)
+    RequestPlayerSlot,
+    /// Release player slot and become spectator again
+    ReleasePlayerSlot,
     /// Leave the current room
     LeaveRoom,
     /// Host-only: Set whether other players can use keyboard/mouse
     SetGuestsKeyboardMouseEnabled {
         enabled: bool,
+    },
+    /// Host-only: Promote a spectator to player
+    PromoteToPlayer {
+        discord_user_id: String,
+    },
+    /// Host-only: Demote a player to spectator
+    DemoteToSpectator {
+        player_slot: PlayerSlot,
     },
     WebRtc(StreamSignalingMessage),
     SetTransport(TransportType),
@@ -547,6 +614,40 @@ pub enum StreamServerMessage {
     /// Keyboard/mouse permission for guests changed
     GuestsKeyboardMouseEnabled {
         enabled: bool,
+    },
+    /// Successfully joined as spectator
+    SpectatorJoined {
+        room: RoomInfo,
+    },
+    /// Promoted from spectator to player
+    PromotedToPlayer {
+        player_slot: PlayerSlot,
+        room: RoomInfo,
+    },
+    /// Demoted from player to spectator
+    DemotedToSpectator {
+        room: RoomInfo,
+    },
+    /// Player slot request result
+    PlayerSlotRequestResult {
+        granted: bool,
+        player_slot: Option<PlayerSlot>,
+        reason: Option<String>,
+    },
+    /// A spectator joined (broadcast to room)
+    SpectatorAdded {
+        name: Option<String>,
+        discord_user_id: Option<String>,
+        discord_avatar: Option<String>,
+    },
+    /// A spectator left (broadcast to room)
+    SpectatorRemoved {
+        discord_user_id: Option<String>,
+    },
+    /// Participants list updated (includes spectators)
+    ParticipantsUpdated {
+        participants: Vec<RoomParticipant>,
+        spectator_count: usize,
     },
 }
 
@@ -1148,3 +1249,43 @@ ts_consts!(
     pub const AV1_HIGH8_444: u32 = SupportedVideoFormats::AV1_HIGH8_444.bits();
     pub const AV1_HIGH10_444: u32 = SupportedVideoFormats::AV1_HIGH10_444.bits();
 );
+
+// Discord Activity API types
+
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[ts(export, export_to = EXPORT_PATH)]
+pub struct PostDiscordTokenRequest {
+    pub code: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[ts(export, export_to = EXPORT_PATH)]
+pub struct PostDiscordTokenResponse {
+    pub access_token: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[ts(export, export_to = EXPORT_PATH)]
+pub struct GetDiscordRoomQuery {
+    pub instance_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[ts(export, export_to = EXPORT_PATH)]
+pub struct GetDiscordRoomResponse {
+    pub room_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[ts(export, export_to = EXPORT_PATH)]
+pub struct PostDiscordRoomRequest {
+    pub instance_id: String,
+    pub host_id: u32,
+    pub app_id: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[ts(export, export_to = EXPORT_PATH)]
+pub struct PostDiscordRoomResponse {
+    pub room_id: String,
+}

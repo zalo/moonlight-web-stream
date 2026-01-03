@@ -18,6 +18,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 
 use crate::{
+    api::discord::DiscordInstanceManager,
     app::{
         auth::{SessionToken, UserAuth},
         host::{AppId, HostId},
@@ -90,6 +91,8 @@ pub enum AppError {
     MoonlightApi(#[from] ApiError<<MoonlightClient as RequestClient>::Error>),
     #[error("pairing error: {0}")]
     Pairing(#[from] PairError<<MoonlightClient as RequestClient>::Error>),
+    #[error("external service error")]
+    ExternalService,
 }
 
 impl ResponseError for AppError {
@@ -120,6 +123,7 @@ impl ResponseError for AppError {
             Self::MoonlightApi(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Pairing(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::ExternalService => StatusCode::BAD_GATEWAY,
         }
     }
 }
@@ -141,6 +145,8 @@ struct AppInner {
     app_image_cache: RwLock<HashMap<(UserId, HostId, AppId), Bytes>>,
     /// Room manager for multi-player streaming sessions
     room_manager: RoomManager,
+    /// Discord Activity instance manager
+    discord_instances: DiscordInstanceManager,
 }
 
 pub type MoonlightClient = ReqwestClient;
@@ -156,6 +162,7 @@ impl App {
             config,
             app_image_cache: Default::default(),
             room_manager: RoomManager::new(),
+            discord_instances: DiscordInstanceManager::new(),
         };
 
         Ok(Self {
@@ -165,6 +172,10 @@ impl App {
 
     pub fn room_manager(&self) -> &RoomManager {
         &self.inner.room_manager
+    }
+
+    pub fn discord_instances(&self) -> &DiscordInstanceManager {
+        &self.inner.discord_instances
     }
 
     fn new_ref(&self) -> AppRef {

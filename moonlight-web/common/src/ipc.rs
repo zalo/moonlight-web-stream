@@ -17,7 +17,7 @@ use tokio::{
 };
 
 use crate::{
-    api_bindings::{PlayerSlot, StreamClientMessage, StreamServerMessage},
+    api_bindings::{PlayerSlot, RoomRole, StreamClientMessage, StreamServerMessage},
     config::WebRtcConfig,
 };
 
@@ -49,9 +49,18 @@ pub enum ServerIpcMessage {
     /// A new peer has connected and needs WebRTC setup
     PeerConnected {
         peer_id: PeerId,
-        player_slot: PlayerSlot,
+        /// Player slot if this is a player (None for spectators)
+        player_slot: Option<PlayerSlot>,
+        /// Role in the room
+        role: RoomRole,
         video_frame_queue_size: usize,
         audio_sample_queue_size: usize,
+    },
+    /// A peer's role has changed (spectator <-> player)
+    PeerRoleChanged {
+        peer_id: PeerId,
+        new_role: RoomRole,
+        player_slot: Option<PlayerSlot>,
     },
     /// A peer has disconnected
     PeerDisconnected {

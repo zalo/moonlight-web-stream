@@ -8,7 +8,7 @@ use std::{
 
 use actix_ws::Session;
 use common::{
-    api_bindings::{PlayerSlot, RoomInfo, RoomPlayer, RtcIceServer, StreamCapabilities, StreamServerMessage},
+    api_bindings::{PlayerSlot, RoomInfo, RoomParticipant, RoomPlayer, RoomRole, RtcIceServer, StreamCapabilities, StreamServerMessage},
     ipc::{PeerId, ServerIpcMessage},
     serialize_json,
 };
@@ -55,11 +55,18 @@ fn generate_room_id() -> String {
     chars
 }
 
-/// Represents a connected player in a room
+/// Represents a connected participant in a room (player or spectator)
 pub struct RoomClient {
     pub peer_id: PeerId,
-    pub player_slot: PlayerSlot,
+    /// Player slot if this is a player, None if spectator
+    pub player_slot: Option<PlayerSlot>,
+    /// Role in the room
+    pub role: RoomRole,
     pub player_name: Option<String>,
+    /// Discord user ID for Discord Activity integration
+    pub discord_user_id: Option<String>,
+    /// Discord avatar URL
+    pub discord_avatar: Option<String>,
     pub session: Session,
     #[allow(dead_code)]
     pub video_frame_queue_size: usize,
@@ -68,12 +75,30 @@ pub struct RoomClient {
 }
 
 impl RoomClient {
-    pub fn to_room_player(&self) -> RoomPlayer {
-        RoomPlayer {
-            slot: self.player_slot,
+    pub fn to_room_player(&self) -> Option<RoomPlayer> {
+        self.player_slot.map(|slot| RoomPlayer {
+            slot,
             name: self.player_name.clone(),
-            is_host: self.player_slot.is_host(),
+            is_host: self.role.is_host(),
+        })
+    }
+
+    pub fn to_participant(&self) -> RoomParticipant {
+        RoomParticipant {
+            slot: self.player_slot,
+            role: self.role,
+            name: self.player_name.clone(),
+            discord_user_id: self.discord_user_id.clone(),
+            discord_avatar: self.discord_avatar.clone(),
         }
+    }
+
+    pub fn is_spectator(&self) -> bool {
+        self.role.is_spectator()
+    }
+
+    pub fn is_player(&self) -> bool {
+        self.role.can_input()
     }
 }
 
@@ -133,9 +158,21 @@ impl Room {
             host_id: self.host_id,
             app_id: self.app_id,
             app_name: self.app_name.clone(),
-            players: self.clients.values().map(|c| c.to_room_player()).collect(),
+            players: self.clients.values().filter_map(|c| c.to_room_player()).collect(),
             max_players: self.max_players,
+            participants: self.clients.values().map(|c| c.to_participant()).collect(),
+            spectator_count: self.spectator_count(),
         }
+    }
+
+    /// Count the number of spectators
+    pub fn spectator_count(&self) -> usize {
+        self.clients.values().filter(|c| c.is_spectator()).count()
+    }
+
+    /// Count the number of players (non-spectators)
+    pub fn player_count(&self) -> usize {
+        self.clients.values().filter(|c| c.is_player()).count()
     }
 
     /// Get the next available player slot
@@ -148,14 +185,28 @@ impl Room {
         None
     }
 
-    /// Add a client to the room
+    /// Add a client (player or spectator) to the room
     pub fn add_client(&mut self, client: RoomClient) -> bool {
-        let slot = client.player_slot.0 as usize;
-        if slot >= PlayerSlot::MAX_PLAYERS || self.occupied_slots[slot] {
+        // If client has a player slot, check and mark it as occupied
+        if let Some(slot) = client.player_slot {
+            let slot_idx = slot.0 as usize;
+            if slot_idx >= PlayerSlot::MAX_PLAYERS || self.occupied_slots[slot_idx] {
+                return false;
+            }
+            self.occupied_slots[slot_idx] = true;
+        }
+        // Spectators don't need a slot - unlimited spectators allowed
+
+        self.clients.insert(client.peer_id, client);
+        true
+    }
+
+    /// Add a spectator to the room
+    pub fn add_spectator(&mut self, client: RoomClient) -> bool {
+        // Spectators should not have a player slot
+        if client.player_slot.is_some() || !client.is_spectator() {
             return false;
         }
-
-        self.occupied_slots[slot] = true;
         self.clients.insert(client.peer_id, client);
         true
     }
@@ -163,14 +214,67 @@ impl Room {
     /// Remove a client from the room
     pub fn remove_client(&mut self, peer_id: PeerId) -> Option<RoomClient> {
         if let Some(client) = self.clients.remove(&peer_id) {
-            let slot = client.player_slot.0 as usize;
-            if slot < PlayerSlot::MAX_PLAYERS {
-                self.occupied_slots[slot] = false;
+            // Free up the player slot if this was a player
+            if let Some(slot) = client.player_slot {
+                let slot_idx = slot.0 as usize;
+                if slot_idx < PlayerSlot::MAX_PLAYERS {
+                    self.occupied_slots[slot_idx] = false;
+                }
             }
             Some(client)
         } else {
             None
         }
+    }
+
+    /// Promote a spectator to player
+    pub fn promote_to_player(&mut self, peer_id: PeerId) -> Option<PlayerSlot> {
+        // Get next available slot
+        let slot = self.next_available_slot()?;
+
+        // Update the client
+        let client = self.clients.get_mut(&peer_id)?;
+        if !client.is_spectator() {
+            return None; // Already a player
+        }
+
+        client.role = RoomRole::Player;
+        client.player_slot = Some(slot);
+        self.occupied_slots[slot.0 as usize] = true;
+
+        Some(slot)
+    }
+
+    /// Demote a player to spectator
+    pub fn demote_to_spectator(&mut self, peer_id: PeerId) -> bool {
+        let client = self.clients.get_mut(&peer_id);
+        let Some(client) = client else {
+            return false;
+        };
+
+        // Don't demote the host
+        if client.role.is_host() {
+            return false;
+        }
+
+        // Free up the player slot
+        if let Some(slot) = client.player_slot.take() {
+            let slot_idx = slot.0 as usize;
+            if slot_idx < PlayerSlot::MAX_PLAYERS {
+                self.occupied_slots[slot_idx] = false;
+            }
+        }
+
+        client.role = RoomRole::Spectator;
+        true
+    }
+
+    /// Find a client by Discord user ID
+    pub fn find_by_discord_id(&self, discord_user_id: &str) -> Option<PeerId> {
+        self.clients
+            .iter()
+            .find(|(_, c)| c.discord_user_id.as_deref() == Some(discord_user_id))
+            .map(|(pid, _)| *pid)
     }
 
     /// Check if the room is empty
@@ -183,7 +287,7 @@ impl Room {
     pub fn has_host(&self) -> bool {
         self.clients
             .values()
-            .any(|c| c.player_slot.is_host())
+            .any(|c| c.role.is_host())
     }
 
     /// Get a client by peer ID

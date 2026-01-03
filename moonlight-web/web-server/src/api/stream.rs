@@ -7,7 +7,7 @@ use actix_web::{
 use actix_ws::{Closed, Message, MessageStream, Session};
 use common::{
     api_bindings::{
-        LogMessageType, PlayerSlot, PostCancelRequest, PostCancelResponse, RoomInfo,
+        LogMessageType, PlayerSlot, PostCancelRequest, PostCancelResponse, RoomInfo, RoomRole,
         StreamClientMessage, StreamServerMessage,
     },
     ipc::{PeerId, ServerIpcMessage, StreamerConfig, StreamerIpcMessage, create_child_ipc},
@@ -116,7 +116,7 @@ async fn handle_guest_connection(
     };
 
     // Get the next available player slot
-    let (peer_id, player_slot, room_info, ipc_sender, ice_servers, stream_state) = {
+    let (peer_id, player_slot, role, room_info, ipc_sender, ice_servers, stream_state) = {
         let mut room_guard = room.lock().await;
 
         let Some(player_slot) = room_guard.next_available_slot() else {
@@ -134,11 +134,14 @@ async fn handle_guest_connection(
 
         let peer_id = web_app.room_manager().generate_peer_id();
 
-        // Add client to room
+        // Add client to room as a player
         let client = RoomClient {
             peer_id,
-            player_slot,
+            player_slot: Some(player_slot),
+            role: RoomRole::Player,
             player_name: player_name.clone(),
+            discord_user_id: None,
+            discord_avatar: None,
             session: session.clone(),
             video_frame_queue_size,
             audio_sample_queue_size,
@@ -162,7 +165,7 @@ async fn handle_guest_connection(
         let ice_servers = room_guard.ice_servers.clone();
         let stream_state = room_guard.stream_state.clone();
 
-        (peer_id, player_slot, room_info, ipc_sender, ice_servers, stream_state)
+        (peer_id, Some(player_slot), RoomRole::Player, room_info, ipc_sender, ice_servers, stream_state)
     };
 
     // Register peer with room manager
@@ -173,7 +176,7 @@ async fn handle_guest_connection(
         &mut session,
         StreamServerMessage::RoomJoined {
             room: room_info.clone(),
-            player_slot,
+            player_slot: player_slot.expect("Player should have slot"),
         },
     )
     .await;
@@ -224,6 +227,7 @@ async fn handle_guest_connection(
             .send(ServerIpcMessage::PeerConnected {
                 peer_id,
                 player_slot,
+                role,
                 video_frame_queue_size,
                 audio_sample_queue_size,
             })
@@ -232,7 +236,7 @@ async fn handle_guest_connection(
 
     // Handle WebSocket messages from this client
     if let Some(ipc_sender) = ipc_sender {
-        handle_client_websocket(web_app, room, peer_id, player_slot, &mut stream, ipc_sender)
+        handle_client_websocket(web_app, room, peer_id, player_slot, role, &mut stream, ipc_sender)
             .await;
     }
 }
@@ -427,13 +431,16 @@ async fn handle_init_room(
     let peer_id = web_app.room_manager().generate_peer_id();
     let player_slot = PlayerSlot::PLAYER_1;
 
-    // Add host as Player 1
+    // Add host as Player 1 (Host role)
     {
         let mut room_guard = room.lock().await;
         let client = RoomClient {
             peer_id,
-            player_slot,
+            player_slot: Some(player_slot),
+            role: RoomRole::Host,
             player_name: Some("Host".to_string()),
+            discord_user_id: None,
+            discord_avatar: None,
             session: session.clone(),
             video_frame_queue_size,
             audio_sample_queue_size,
@@ -565,7 +572,8 @@ async fn handle_init_room(
     ipc_sender
         .send(ServerIpcMessage::PeerConnected {
             peer_id,
-            player_slot,
+            player_slot: Some(player_slot),
+            role: RoomRole::Host,
             video_frame_queue_size,
             audio_sample_queue_size,
         })
@@ -576,7 +584,8 @@ async fn handle_init_room(
         web_app,
         room,
         peer_id,
-        player_slot,
+        Some(player_slot),
+        RoomRole::Host,
         &mut stream,
         ipc_sender,
     )
@@ -607,7 +616,7 @@ async fn handle_join_room(
     };
 
     // Get the next available player slot
-    let (peer_id, player_slot, room_info, ipc_sender, ice_servers, stream_state) = {
+    let (peer_id, player_slot, role, room_info, ipc_sender, ice_servers, stream_state) = {
         let mut room_guard = room.lock().await;
 
         let Some(player_slot) = room_guard.next_available_slot() else {
@@ -625,11 +634,14 @@ async fn handle_join_room(
 
         let peer_id = web_app.room_manager().generate_peer_id();
 
-        // Add client to room
+        // Add client to room as a player
         let client = RoomClient {
             peer_id,
-            player_slot,
+            player_slot: Some(player_slot),
+            role: RoomRole::Player,
             player_name: player_name.clone(),
+            discord_user_id: None,
+            discord_avatar: None,
             session: session.clone(),
             video_frame_queue_size,
             audio_sample_queue_size,
@@ -653,7 +665,7 @@ async fn handle_join_room(
         let ice_servers = room_guard.ice_servers.clone();
         let stream_state = room_guard.stream_state.clone();
 
-        (peer_id, player_slot, room_info, ipc_sender, ice_servers, stream_state)
+        (peer_id, Some(player_slot), RoomRole::Player, room_info, ipc_sender, ice_servers, stream_state)
     };
 
     // Register peer with room manager
@@ -664,7 +676,7 @@ async fn handle_join_room(
         &mut session,
         StreamServerMessage::RoomJoined {
             room: room_info.clone(),
-            player_slot,
+            player_slot: player_slot.expect("Player should have slot"),
         },
     )
     .await;
@@ -715,6 +727,7 @@ async fn handle_join_room(
             .send(ServerIpcMessage::PeerConnected {
                 peer_id,
                 player_slot,
+                role,
                 video_frame_queue_size,
                 audio_sample_queue_size,
             })
@@ -723,7 +736,7 @@ async fn handle_join_room(
 
     // Handle WebSocket messages from this client
     if let Some(ipc_sender) = ipc_sender {
-        handle_client_websocket(web_app, room, peer_id, player_slot, &mut stream, ipc_sender)
+        handle_client_websocket(web_app, room, peer_id, player_slot, role, &mut stream, ipc_sender)
             .await;
     }
 }
@@ -733,7 +746,8 @@ async fn handle_client_websocket(
     web_app: Data<App>,
     room: Arc<Mutex<Room>>,
     peer_id: PeerId,
-    player_slot: PlayerSlot,
+    player_slot: Option<PlayerSlot>,
+    role: RoomRole,
     stream: &mut MessageStream,
     mut ipc_sender: common::ipc::IpcSender<ServerIpcMessage>,
 ) {
@@ -753,8 +767,8 @@ async fn handle_client_websocket(
 
                 // Handle host-only keyboard/mouse permission setting
                 if let StreamClientMessage::SetGuestsKeyboardMouseEnabled { enabled } = &client_message {
-                    // Only the host (Player 1) can change this setting
-                    if player_slot.is_host() {
+                    // Only the host can change this setting
+                    if role.is_host() {
                         let mut room_guard = room.lock().await;
                         room_guard.set_guests_keyboard_mouse_enabled(*enabled).await;
 
