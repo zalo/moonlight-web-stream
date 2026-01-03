@@ -112,11 +112,99 @@ image = (
     )
     # Copy configuration files from the already-copied source tree
     .run_commands(
-        "cp /app/moonlight-web-stream/discord-cloud-gaming/config/xorg.conf /etc/X11/xorg.conf",
-        "cp /app/moonlight-web-stream/discord-cloud-gaming/config/supervisord.conf /etc/supervisor/conf.d/gaming.conf",
-        "mkdir -p /etc/sunshine && cp /app/moonlight-web-stream/discord-cloud-gaming/config/sunshine.conf /etc/sunshine/sunshine.conf",
-        "cp /app/moonlight-web-stream/discord-cloud-gaming/scripts/start-services.sh /app/start-services.sh",
+        "cp /app/moonlight-web-stream/discord-cloud-gaming/config/xorg.conf /etc/X11/xorg.conf || echo 'xorg.conf not found'",
+        "cp /app/moonlight-web-stream/discord-cloud-gaming/config/supervisord.conf /etc/supervisor/conf.d/gaming.conf || echo 'supervisord.conf not found'",
+        "mkdir -p /etc/sunshine && cp /app/moonlight-web-stream/discord-cloud-gaming/config/sunshine.conf /etc/sunshine/sunshine.conf || echo 'sunshine.conf not found'",
+    )
+    # Create start-services.sh inline to guarantee it exists
+    .run_commands(
+        """cat > /app/start-services.sh << 'SCRIPT_EOF'
+#!/bin/bash
+# Start all services for Discord Cloud Gaming
+set -e
+
+echo "Starting Discord Cloud Gaming services..."
+
+# Create required directories
+mkdir -p /tmp/runtime /tmp/pulse /data/sunshine /data/server
+chmod 700 /tmp/runtime
+
+# Export environment
+export DISPLAY=:99
+export PULSE_SERVER=unix:/tmp/pulse/native
+export XDG_RUNTIME_DIR=/tmp/runtime
+export HOME=/root
+
+# Start Xvfb (virtual display)
+echo "Starting Xvfb..."
+Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
+XVFB_PID=$!
+sleep 2
+
+# Verify X is running
+if ! xdpyinfo -display :99 >/dev/null 2>&1; then
+    echo "ERROR: Xvfb failed to start"
+    exit 1
+fi
+echo "Xvfb started successfully"
+
+# Start D-Bus
+echo "Starting D-Bus..."
+if [ ! -S /tmp/dbus-session.sock ]; then
+    dbus-daemon --session --fork --print-address > /tmp/dbus-address 2>/dev/null || true
+fi
+export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/dbus-address 2>/dev/null || echo "")
+
+# Start PulseAudio
+echo "Starting PulseAudio..."
+pulseaudio --daemonize=no --exit-idle-time=-1 --disable-shm \
+    --load="module-native-protocol-unix auth-anonymous=1 socket=/tmp/pulse/native" \
+    --load="module-always-sink" \
+    --load="module-null-sink sink_name=game_audio sink_properties=device.description=GameAudio" &
+PULSE_PID=$!
+sleep 2
+echo "PulseAudio started"
+
+# Configure default audio sink
+pactl set-default-sink game_audio 2>/dev/null || true
+
+# Start Sunshine if it exists
+if command -v sunshine &> /dev/null; then
+    echo "Starting Sunshine..."
+    mkdir -p /data/sunshine
+    if [ ! -f /data/sunshine/sunshine.conf ]; then
+        echo "Creating initial Sunshine configuration..."
+        cat > /data/sunshine/sunshine.conf << 'SUNCONF'
+origin_web_ui_allowed = wan
+encoder = nvenc
+min_log_level = info
+SUNCONF
+    fi
+    sunshine /data/sunshine/sunshine.conf &
+    SUNSHINE_PID=$!
+    sleep 3
+    echo "Sunshine started (PID: $SUNSHINE_PID)"
+else
+    echo "WARNING: Sunshine not found, skipping..."
+fi
+
+# Signal handler for cleanup
+cleanup() {
+    echo "Shutting down services..."
+    kill $SUNSHINE_PID 2>/dev/null || true
+    kill $PULSE_PID 2>/dev/null || true
+    kill $XVFB_PID 2>/dev/null || true
+    exit 0
+}
+trap cleanup SIGTERM SIGINT
+
+echo "All services started successfully"
+echo "Display: $DISPLAY"
+echo "Audio: $PULSE_SERVER"
+wait
+SCRIPT_EOF""",
         "chmod +x /app/start-services.sh",
+        "ls -la /app/start-services.sh",  # Verify it exists
     )
     # Set environment variables
     .env({
