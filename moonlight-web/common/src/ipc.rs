@@ -17,7 +17,7 @@ use tokio::{
 };
 
 use crate::{
-    api_bindings::{StreamClientMessage, StreamServerMessage},
+    api_bindings::{PlayerSlot, StreamClientMessage, StreamServerMessage},
     config::WebRtcConfig,
 };
 
@@ -26,6 +26,10 @@ pub struct StreamerConfig {
     pub webrtc: WebRtcConfig,
     pub log_level: LevelFilter,
 }
+
+/// Unique identifier for a connected peer/client
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PeerId(pub u64);
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,15 +46,57 @@ pub enum ServerIpcMessage {
         video_frame_queue_size: usize,
         audio_sample_queue_size: usize,
     },
+    /// A new peer has connected and needs WebRTC setup
+    PeerConnected {
+        peer_id: PeerId,
+        player_slot: PlayerSlot,
+        video_frame_queue_size: usize,
+        audio_sample_queue_size: usize,
+    },
+    /// A peer has disconnected
+    PeerDisconnected {
+        peer_id: PeerId,
+    },
+    /// WebSocket message from a specific peer
     WebSocket(StreamClientMessage),
+    /// WebSocket message from a specific peer (with peer ID for multi-peer)
+    PeerWebSocket {
+        peer_id: PeerId,
+        message: StreamClientMessage,
+    },
     WebSocketTransport(Bytes),
+    /// Transport data from a specific peer
+    PeerWebSocketTransport {
+        peer_id: PeerId,
+        data: Bytes,
+    },
+    /// Set whether guests can use keyboard/mouse
+    SetGuestsKeyboardMouseEnabled {
+        enabled: bool,
+    },
     Stop,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum StreamerIpcMessage {
+    /// Send to all connected peers (broadcast)
     WebSocket(StreamServerMessage),
+    /// Send to a specific peer
+    PeerWebSocket {
+        peer_id: PeerId,
+        message: StreamServerMessage,
+    },
+    /// Send transport data to all peers (broadcast)
     WebSocketTransport(Bytes),
+    /// Send transport data to a specific peer
+    PeerWebSocketTransport {
+        peer_id: PeerId,
+        data: Bytes,
+    },
+    /// Notify that a peer's WebRTC is ready
+    PeerReady {
+        peer_id: PeerId,
+    },
     Stop,
 }
 

@@ -283,6 +283,52 @@ pub struct GetUsersResponse {
 
 // -- Stream
 
+/// Player slot for multi-player streaming (1-4)
+#[derive(Serialize, Deserialize, Debug, TS, Clone, Copy, PartialEq, Eq)]
+#[ts(export, export_to = EXPORT_PATH)]
+pub struct PlayerSlot(pub u8);
+
+impl PlayerSlot {
+    pub const PLAYER_1: PlayerSlot = PlayerSlot(0);
+    pub const PLAYER_2: PlayerSlot = PlayerSlot(1);
+    pub const PLAYER_3: PlayerSlot = PlayerSlot(2);
+    pub const PLAYER_4: PlayerSlot = PlayerSlot(3);
+    pub const MAX_PLAYERS: usize = 4;
+
+    pub fn is_host(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn can_use_keyboard_mouse(&self) -> bool {
+        self.0 == 0 // Only Player 1 can use keyboard/mouse
+    }
+
+    pub fn gamepad_slot(&self) -> u8 {
+        self.0
+    }
+}
+
+/// Information about a player in a room
+#[derive(Serialize, Deserialize, Debug, TS, Clone)]
+#[ts(export, export_to = EXPORT_PATH)]
+pub struct RoomPlayer {
+    pub slot: PlayerSlot,
+    pub name: Option<String>,
+    pub is_host: bool,
+}
+
+/// Information about a streaming room
+#[derive(Serialize, Deserialize, Debug, TS, Clone)]
+#[ts(export, export_to = EXPORT_PATH)]
+pub struct RoomInfo {
+    pub room_id: String,
+    pub host_id: u32,
+    pub app_id: u32,
+    pub app_name: String,
+    pub players: Vec<RoomPlayer>,
+    pub max_players: u8,
+}
+
 #[derive(Serialize, Deserialize, Debug, TS, Clone, Copy, PartialEq, Eq)]
 #[ts(export, export_to = EXPORT_PATH)]
 #[serde(rename_all = "lowercase")]
@@ -366,11 +412,25 @@ pub enum TransportType {
 #[derive(Serialize, Deserialize, Debug, TS)]
 #[ts(export, export_to = EXPORT_PATH)]
 pub enum StreamClientMessage {
+    /// Initialize a new stream session (creates room as host/Player 1)
     Init {
         host_id: u32,
         app_id: u32,
         video_frame_queue_size: usize,
         audio_sample_queue_size: usize,
+    },
+    /// Join an existing room as a player (2-4)
+    JoinRoom {
+        room_id: String,
+        player_name: Option<String>,
+        video_frame_queue_size: usize,
+        audio_sample_queue_size: usize,
+    },
+    /// Leave the current room
+    LeaveRoom,
+    /// Host-only: Set whether other players can use keyboard/mouse
+    SetGuestsKeyboardMouseEnabled {
+        enabled: bool,
     },
     WebRtc(StreamSignalingMessage),
     SetTransport(TransportType),
@@ -454,6 +514,34 @@ pub enum StreamServerMessage {
     },
     ConnectionTerminated {
         error_code: i32,
+    },
+    /// Room created successfully (sent to host/Player 1)
+    RoomCreated {
+        room: RoomInfo,
+        player_slot: PlayerSlot,
+    },
+    /// Successfully joined a room
+    RoomJoined {
+        room: RoomInfo,
+        player_slot: PlayerSlot,
+    },
+    /// Room state updated (player joined/left)
+    RoomUpdated {
+        room: RoomInfo,
+    },
+    /// Failed to join room
+    RoomJoinFailed {
+        reason: String,
+    },
+    /// Player left the room
+    PlayerLeft {
+        slot: PlayerSlot,
+    },
+    /// Room closed (host left)
+    RoomClosed,
+    /// Keyboard/mouse permission for guests changed
+    GuestsKeyboardMouseEnabled {
+        enabled: bool,
     },
 }
 

@@ -47,18 +47,21 @@ use common::api_bindings::{StreamCapabilities, StreamServerMessage};
 
 use crate::{
     audio::StreamAudioDecoder,
+    peer_manager::PeerManager,
     transport::{
         InboundPacket, OutboundPacket, TransportError, TransportEvent, TransportEvents,
         TransportSender, web_socket, webrtc,
     },
     video::StreamVideoDecoder,
 };
+use common::ipc::PeerId;
 
 pub type RequestClient = ReqwestClient;
 
 mod audio;
 mod buffer;
 mod convert;
+mod peer_manager;
 mod transport;
 mod video;
 
@@ -219,6 +222,10 @@ struct StreamConnection {
     pub transport_sender: Mutex<Option<Box<dyn TransportSender + Send + Sync + 'static>>>,
     pub terminate: Notify,
     is_terminating: AtomicBool,
+    // Multi-peer support
+    pub peer_manager: RwLock<PeerManager>,
+    /// Current peer context for input handling (set during packet processing)
+    pub current_peer_id: RwLock<Option<PeerId>>,
 }
 
 impl StreamConnection {
@@ -248,6 +255,8 @@ impl StreamConnection {
             transport_sender: Mutex::new(None),
             terminate: Notify::default(),
             is_terminating: AtomicBool::new(false),
+            peer_manager: RwLock::new(PeerManager::new()),
+            current_peer_id: RwLock::new(None),
         });
 
         spawn({
@@ -382,6 +391,15 @@ impl StreamConnection {
             return;
         };
 
+        // Get current peer ID for input filtering/mapping
+        let current_peer = *self.current_peer_id.read().await;
+        let peer_manager = self.peer_manager.read().await;
+
+        // Helper to check if current peer can use keyboard/mouse
+        let can_use_keyboard_mouse = current_peer
+            .map(|pid| peer_manager.can_use_keyboard_mouse(pid))
+            .unwrap_or(true); // Allow if no peer context (backwards compat)
+
         let err = match packet {
             InboundPacket::General { message } => {
                 // currently there are no packets associated with that
@@ -392,16 +410,34 @@ impl StreamConnection {
                 y,
                 reference_width,
                 reference_height,
-            } => stream
-                .send_mouse_position(x, y, reference_width, reference_height)
-                .err(),
+            } => {
+                if !can_use_keyboard_mouse {
+                    debug!("Ignoring mouse position from non-Player 1");
+                    return;
+                }
+                stream
+                    .send_mouse_position(x, y, reference_width, reference_height)
+                    .err()
+            }
             InboundPacket::MouseButton { action, button } => {
+                if !can_use_keyboard_mouse {
+                    debug!("Ignoring mouse button from non-Player 1");
+                    return;
+                }
                 stream.send_mouse_button(action, button).err()
             }
             InboundPacket::MouseMove { delta_x, delta_y } => {
+                if !can_use_keyboard_mouse {
+                    debug!("Ignoring mouse move from non-Player 1");
+                    return;
+                }
                 stream.send_mouse_move(delta_x, delta_y).err()
             }
             InboundPacket::HighResScroll { delta_x, delta_y } => {
+                if !can_use_keyboard_mouse {
+                    debug!("Ignoring scroll from non-Player 1");
+                    return;
+                }
                 let mut err = None;
                 if delta_y != 0 {
                     err = stream.send_high_res_scroll(delta_y).err()
@@ -412,6 +448,10 @@ impl StreamConnection {
                 err
             }
             InboundPacket::Scroll { delta_x, delta_y } => {
+                if !can_use_keyboard_mouse {
+                    debug!("Ignoring scroll from non-Player 1");
+                    return;
+                }
                 let mut err = None;
                 if delta_y != 0 {
                     err = stream.send_scroll(delta_y).err();
@@ -426,10 +466,22 @@ impl StreamConnection {
                 modifiers,
                 key,
                 flags,
-            } => stream
-                .send_keyboard_event_non_standard(key as i16, action, modifiers, flags)
-                .err(),
-            InboundPacket::Text { text } => stream.send_text(&text).err(),
+            } => {
+                if !can_use_keyboard_mouse {
+                    debug!("Ignoring keyboard from non-Player 1");
+                    return;
+                }
+                stream
+                    .send_keyboard_event_non_standard(key as i16, action, modifiers, flags)
+                    .err()
+            }
+            InboundPacket::Text { text } => {
+                if !can_use_keyboard_mouse {
+                    debug!("Ignoring text input from non-Player 1");
+                    return;
+                }
+                stream.send_text(&text).err()
+            }
             InboundPacket::Touch {
                 pointer_id,
                 x,
@@ -439,26 +491,45 @@ impl StreamConnection {
                 contact_area_minor,
                 rotation,
                 event_type,
-            } => stream
-                .send_touch(
-                    pointer_id,
-                    x,
-                    y,
-                    pressure_or_distance,
-                    contact_area_major,
-                    contact_area_minor,
-                    rotation,
-                    event_type,
-                )
-                .err(),
+            } => {
+                if !can_use_keyboard_mouse {
+                    debug!("Ignoring touch from non-Player 1");
+                    return;
+                }
+                stream
+                    .send_touch(
+                        pointer_id,
+                        x,
+                        y,
+                        pressure_or_distance,
+                        contact_area_major,
+                        contact_area_minor,
+                        rotation,
+                        event_type,
+                    )
+                    .err()
+            }
             InboundPacket::ControllerConnected {
                 id,
                 ty,
                 supported_buttons,
                 capabilities,
             } => {
-                let Some(gamepad) = ActiveGamepads::from_id(id) else {
-                    warn!("Failed to add gamepad because it is out of range: {id}");
+                // Map the browser's gamepad ID to the actual slot based on player
+                let mapped_id = if let Some(peer_id) = current_peer {
+                    match peer_manager.map_gamepad_id(peer_id, id) {
+                        Some(mapped) => mapped,
+                        None => {
+                            debug!("Ignoring gamepad {} from peer {:?}", id, peer_id);
+                            return;
+                        }
+                    }
+                } else {
+                    id // No peer context, use original ID
+                };
+
+                let Some(gamepad) = ActiveGamepads::from_id(mapped_id) else {
+                    warn!("Failed to add gamepad because it is out of range: {mapped_id}");
                     return;
                 };
 
@@ -468,7 +539,7 @@ impl StreamConnection {
 
                 stream
                     .send_controller_arrival(
-                        id,
+                        mapped_id,
                         *active_gamepads,
                         ty,
                         supported_buttons,
@@ -477,8 +548,21 @@ impl StreamConnection {
                     .err()
             }
             InboundPacket::ControllerDisconnected { id } => {
-                let Some(gamepad) = ActiveGamepads::from_id(id) else {
-                    warn!("Failed to remove gamepad because it is out of range: {id}");
+                // Map the browser's gamepad ID to the actual slot based on player
+                let mapped_id = if let Some(peer_id) = current_peer {
+                    match peer_manager.map_gamepad_id(peer_id, id) {
+                        Some(mapped) => mapped,
+                        None => {
+                            debug!("Ignoring gamepad disconnect {} from peer {:?}", id, peer_id);
+                            return;
+                        }
+                    }
+                } else {
+                    id
+                };
+
+                let Some(gamepad) = ActiveGamepads::from_id(mapped_id) else {
+                    warn!("Failed to remove gamepad because it is out of range: {mapped_id}");
                     return;
                 };
 
@@ -487,7 +571,7 @@ impl StreamConnection {
 
                 stream
                     .send_multi_controller(
-                        id,
+                        mapped_id,
                         *active_gamepads,
                         ControllerButtons::empty(),
                         0,
@@ -509,15 +593,28 @@ impl StreamConnection {
                 right_stick_x,
                 right_stick_y,
             } => {
-                let Some(gamepad) = ActiveGamepads::from_id(id) else {
-                    warn!("Failed to update gamepad state because it is out of range: {id}");
+                // Map the browser's gamepad ID to the actual slot based on player
+                let mapped_id = if let Some(peer_id) = current_peer {
+                    match peer_manager.map_gamepad_id(peer_id, id) {
+                        Some(mapped) => mapped,
+                        None => {
+                            // Silently drop - this is frequent during gameplay
+                            return;
+                        }
+                    }
+                } else {
+                    id
+                };
+
+                let Some(gamepad) = ActiveGamepads::from_id(mapped_id) else {
+                    warn!("Failed to update gamepad state because it is out of range: {mapped_id}");
                     return;
                 };
 
                 let active_gamepads = self.active_gamepads.read().await;
                 if !active_gamepads.contains(gamepad) {
                     warn!(
-                        "Failed to send gamepad event for not registered gamepad, gamepad: {id}, currently active: {:?}",
+                        "Failed to send gamepad event for not registered gamepad, gamepad: {mapped_id}, currently active: {:?}",
                         *active_gamepads
                     );
                     return;
@@ -525,7 +622,7 @@ impl StreamConnection {
 
                 stream
                     .send_multi_controller(
-                        id,
+                        mapped_id,
                         *active_gamepads,
                         buttons,
                         left_trigger,
@@ -545,6 +642,60 @@ impl StreamConnection {
     }
 
     async fn on_ipc_message(self: &Arc<StreamConnection>, message: ServerIpcMessage) {
+        // Handle peer management messages
+        match &message {
+            ServerIpcMessage::PeerConnected {
+                peer_id,
+                player_slot,
+                video_frame_queue_size,
+                audio_sample_queue_size,
+            } => {
+                info!(
+                    "Peer {:?} connected as player slot {}",
+                    peer_id, player_slot.0
+                );
+                let mut peer_manager = self.peer_manager.write().await;
+                peer_manager.add_peer(
+                    *peer_id,
+                    *player_slot,
+                    *video_frame_queue_size,
+                    *audio_sample_queue_size,
+                );
+                return;
+            }
+            ServerIpcMessage::PeerDisconnected { peer_id } => {
+                info!("Peer {:?} disconnected", peer_id);
+                let mut peer_manager = self.peer_manager.write().await;
+                peer_manager.remove_peer(*peer_id);
+                return;
+            }
+            ServerIpcMessage::PeerWebSocket { peer_id, message } => {
+                // Set current peer context for input handling
+                {
+                    let mut current = self.current_peer_id.write().await;
+                    *current = Some(*peer_id);
+                }
+                // Forward to regular message handling
+                return self.on_ipc_message(ServerIpcMessage::WebSocket(message.clone())).await;
+            }
+            ServerIpcMessage::PeerWebSocketTransport { peer_id, data } => {
+                // Set current peer context for input handling
+                {
+                    let mut current = self.current_peer_id.write().await;
+                    *current = Some(*peer_id);
+                }
+                // Forward to regular transport handling
+                return self.on_ipc_message(ServerIpcMessage::WebSocketTransport(data.clone())).await;
+            }
+            ServerIpcMessage::SetGuestsKeyboardMouseEnabled { enabled } => {
+                info!("Setting guests keyboard/mouse enabled: {}", enabled);
+                let mut peer_manager = self.peer_manager.write().await;
+                peer_manager.set_guests_keyboard_mouse_enabled(*enabled);
+                return;
+            }
+            _ => {}
+        }
+
         if let ServerIpcMessage::WebSocket(StreamClientMessage::SetTransport(transport_type)) =
             &message
         {

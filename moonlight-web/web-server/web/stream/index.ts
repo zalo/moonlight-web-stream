@@ -1,5 +1,5 @@
 import { Api } from "../api.js"
-import { App, ConnectionStatus, StreamCapabilities, StreamClientMessage, StreamServerMessage, TransportChannelId } from "../api_bindings.js"
+import { App, ConnectionStatus, PlayerSlot, RoomInfo, StreamCapabilities, StreamClientMessage, StreamServerMessage, TransportChannelId } from "../api_bindings.js"
 import { showErrorPopup } from "../component/error.js"
 import { Component } from "../component/index.js"
 import { Settings } from "../component/settings_menu.js"
@@ -27,7 +27,14 @@ export type InfoEvent = CustomEvent<
     { type: "serverMessage", message: string } |
     { type: "connectionComplete", capabilities: StreamCapabilities } |
     { type: "connectionStatus", status: ConnectionStatus } |
-    { type: "addDebugLine", line: string, additional?: LogMessageInfo }
+    { type: "addDebugLine", line: string, additional?: LogMessageInfo } |
+    { type: "roomCreated", room: RoomInfo, playerSlot: PlayerSlot } |
+    { type: "roomJoined", room: RoomInfo, playerSlot: PlayerSlot } |
+    { type: "roomUpdated", room: RoomInfo } |
+    { type: "roomJoinFailed", reason: string } |
+    { type: "playerLeft", slot: PlayerSlot } |
+    { type: "roomClosed" } |
+    { type: "guestsKeyboardMouseEnabled", enabled: boolean }
 >
 export type InfoEventListener = (event: InfoEvent) => void
 
@@ -100,6 +107,11 @@ export class Stream implements Component {
     private stats: StreamStats
 
     private streamerSize: [number, number]
+
+    // Room state
+    private roomInfo: RoomInfo | null = null
+    private playerSlot: PlayerSlot | null = null
+    private guestsKeyboardMouseEnabled: boolean = false
 
     constructor(api: Api, hostId: number, appId: number, settings: Settings, viewerScreenSize: [number, number]) {
         this.logger.addInfoListener((info, type) => {
@@ -236,6 +248,75 @@ export class Stream implements Component {
             } else {
                 this.debugLog(`Received WebRTC message but transport is currently ${this.transport?.implementationName}`)
             }
+        }
+        // -- Room messages
+        else if ("RoomCreated" in message) {
+            this.roomInfo = message.RoomCreated.room
+            this.playerSlot = message.RoomCreated.player_slot
+
+            this.debugLog(`Room created: ${this.roomInfo.room_id} - You are Player ${this.playerSlot[0] + 1} (Host)`)
+
+            const event: InfoEvent = new CustomEvent("stream-info", {
+                detail: { type: "roomCreated", room: this.roomInfo, playerSlot: this.playerSlot }
+            })
+            this.eventTarget.dispatchEvent(event)
+        }
+        else if ("RoomJoined" in message) {
+            this.roomInfo = message.RoomJoined.room
+            this.playerSlot = message.RoomJoined.player_slot
+
+            this.debugLog(`Joined room: ${this.roomInfo.room_id} - You are Player ${this.playerSlot[0] + 1}`)
+
+            const event: InfoEvent = new CustomEvent("stream-info", {
+                detail: { type: "roomJoined", room: this.roomInfo, playerSlot: this.playerSlot }
+            })
+            this.eventTarget.dispatchEvent(event)
+        }
+        else if ("RoomUpdated" in message) {
+            this.roomInfo = message.RoomUpdated.room
+
+            this.debugLog(`Room updated: ${this.roomInfo.players.length} players connected`)
+
+            const event: InfoEvent = new CustomEvent("stream-info", {
+                detail: { type: "roomUpdated", room: this.roomInfo }
+            })
+            this.eventTarget.dispatchEvent(event)
+        }
+        else if ("RoomJoinFailed" in message) {
+            this.debugLog(`Failed to join room: ${message.RoomJoinFailed.reason}`, { type: "fatal" })
+
+            const event: InfoEvent = new CustomEvent("stream-info", {
+                detail: { type: "roomJoinFailed", reason: message.RoomJoinFailed.reason }
+            })
+            this.eventTarget.dispatchEvent(event)
+        }
+        else if ("PlayerLeft" in message) {
+            const slot = message.PlayerLeft.slot
+
+            this.debugLog(`Player ${slot[0] + 1} left the room`)
+
+            const event: InfoEvent = new CustomEvent("stream-info", {
+                detail: { type: "playerLeft", slot }
+            })
+            this.eventTarget.dispatchEvent(event)
+        }
+        else if ("RoomClosed" in message) {
+            this.debugLog(`Room closed by host`, { type: "fatal" })
+
+            const event: InfoEvent = new CustomEvent("stream-info", {
+                detail: { type: "roomClosed" }
+            })
+            this.eventTarget.dispatchEvent(event)
+        }
+        else if ("GuestsKeyboardMouseEnabled" in message) {
+            this.guestsKeyboardMouseEnabled = message.GuestsKeyboardMouseEnabled.enabled
+
+            this.debugLog(`Guests keyboard/mouse ${this.guestsKeyboardMouseEnabled ? "enabled" : "disabled"}`)
+
+            const event: InfoEvent = new CustomEvent("stream-info", {
+                detail: { type: "guestsKeyboardMouseEnabled", enabled: this.guestsKeyboardMouseEnabled }
+            })
+            this.eventTarget.dispatchEvent(event)
         }
     }
 
@@ -584,6 +665,70 @@ export class Stream implements Component {
 
     getStreamerSize(): [number, number] {
         return this.streamerSize
+    }
+
+    getRoomInfo(): RoomInfo | null {
+        return this.roomInfo
+    }
+
+    getPlayerSlot(): PlayerSlot | null {
+        return this.playerSlot
+    }
+
+    isHost(): boolean {
+        return this.playerSlot !== null && this.playerSlot[0] === 0
+    }
+
+    canUseKeyboardMouse(): boolean {
+        if (this.isHost()) {
+            return true
+        }
+        return this.guestsKeyboardMouseEnabled
+    }
+
+    getGuestsKeyboardMouseEnabled(): boolean {
+        return this.guestsKeyboardMouseEnabled
+    }
+
+    /**
+     * Host-only: Set whether guests can use keyboard/mouse
+     */
+    setGuestsKeyboardMouseEnabled(enabled: boolean): void {
+        if (!this.isHost()) {
+            console.warn("Only the host can change keyboard/mouse permission")
+            return
+        }
+        this.sendWsMessage({
+            SetGuestsKeyboardMouseEnabled: {
+                enabled
+            }
+        })
+    }
+
+    /**
+     * Create a Stream that joins an existing room
+     */
+    static joinRoom(
+        api: Api,
+        roomId: string,
+        playerName: string | null,
+        settings: Settings,
+        viewerScreenSize: [number, number]
+    ): Stream {
+        const stream = new Stream(api, 0, 0, settings, viewerScreenSize)
+
+        // Override the init message with a join room message
+        stream.wsSendBuffer.length = 0 // Clear the Init message
+        stream.sendWsMessage({
+            JoinRoom: {
+                room_id: roomId,
+                player_name: playerName,
+                video_frame_queue_size: settings.videoFrameQueueSize,
+                audio_sample_queue_size: settings.audioSampleQueueSize,
+            }
+        })
+
+        return stream
     }
 }
 

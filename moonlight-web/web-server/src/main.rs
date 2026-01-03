@@ -21,6 +21,7 @@ use crate::{
 
 mod api;
 mod app;
+mod room;
 mod web;
 
 mod cli;

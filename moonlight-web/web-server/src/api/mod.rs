@@ -315,6 +315,7 @@ pub fn api_service() -> impl HttpServiceFactory {
             // -- Stream
             stream::start_host,
             stream::cancel_host,
+            stream::list_rooms,
         ])
         .service(services![
             // -- Admin

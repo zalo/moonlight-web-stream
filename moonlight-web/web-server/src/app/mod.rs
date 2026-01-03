@@ -17,12 +17,15 @@ use openssl::error::ErrorStack;
 use thiserror::Error;
 use tokio::sync::RwLock;
 
-use crate::app::{
-    auth::{SessionToken, UserAuth},
-    host::{AppId, HostId},
-    password::StoragePassword,
-    storage::{Either, Storage, StorageHostModify, StorageUserAdd, create_storage},
-    user::{Admin, AuthenticatedUser, Role, User, UserId},
+use crate::{
+    app::{
+        auth::{SessionToken, UserAuth},
+        host::{AppId, HostId},
+        password::StoragePassword,
+        storage::{Either, Storage, StorageHostModify, StorageUserAdd, create_storage},
+        user::{Admin, AuthenticatedUser, Role, User, UserId},
+    },
+    room::RoomManager,
 };
 
 pub mod auth;
@@ -136,6 +139,8 @@ struct AppInner {
     config: Config,
     storage: Arc<dyn Storage + Send + Sync>,
     app_image_cache: RwLock<HashMap<(UserId, HostId, AppId), Bytes>>,
+    /// Room manager for multi-player streaming sessions
+    room_manager: RoomManager,
 }
 
 pub type MoonlightClient = ReqwestClient;
@@ -150,11 +155,16 @@ impl App {
             storage: create_storage(config.data_storage.clone()).await?,
             config,
             app_image_cache: Default::default(),
+            room_manager: RoomManager::new(),
         };
 
         Ok(Self {
             inner: Arc::new(app),
         })
+    }
+
+    pub fn room_manager(&self) -> &RoomManager {
+        &self.inner.room_manager
     }
 
     fn new_ref(&self) -> AppRef {

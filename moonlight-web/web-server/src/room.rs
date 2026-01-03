@@ -1,0 +1,327 @@
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
+
+use actix_ws::Session;
+use common::{
+    api_bindings::{PlayerSlot, RoomInfo, RoomPlayer, StreamServerMessage},
+    ipc::{IpcSender, PeerId, StreamerIpcMessage},
+    serialize_json,
+};
+use log::{debug, info, warn};
+use tokio::sync::{Mutex, RwLock};
+
+/// Global counter for generating unique peer IDs
+static PEER_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn generate_peer_id() -> PeerId {
+    PeerId(PEER_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+}
+
+/// Generate a short room ID for sharing
+fn generate_room_id() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let chars: String = (0..6)
+        .map(|_| {
+            let idx = rng.gen_range(0..36);
+            if idx < 10 {
+                (b'0' + idx) as char
+            } else {
+                (b'A' + idx - 10) as char
+            }
+        })
+        .collect();
+    chars
+}
+
+/// Represents a connected player in a room
+#[derive(Debug)]
+pub struct RoomClient {
+    pub peer_id: PeerId,
+    pub player_slot: PlayerSlot,
+    pub player_name: Option<String>,
+    pub session: Session,
+    pub video_frame_queue_size: usize,
+    pub audio_sample_queue_size: usize,
+}
+
+impl RoomClient {
+    pub fn to_room_player(&self) -> RoomPlayer {
+        RoomPlayer {
+            slot: self.player_slot,
+            name: self.player_name.clone(),
+            is_host: self.player_slot.is_host(),
+        }
+    }
+}
+
+/// Represents an active streaming room
+pub struct Room {
+    pub room_id: String,
+    pub host_id: u32,
+    pub app_id: u32,
+    pub app_name: String,
+    pub max_players: u8,
+    /// Connected clients indexed by peer_id
+    pub clients: HashMap<PeerId, RoomClient>,
+    /// IPC sender to the streamer process
+    pub ipc_sender: Option<IpcSender<common::ipc::ServerIpcMessage>>,
+    /// Track which player slots are occupied
+    occupied_slots: [bool; PlayerSlot::MAX_PLAYERS],
+    /// Whether guests (non-host players) can use keyboard/mouse
+    pub guests_keyboard_mouse_enabled: bool,
+}
+
+impl Room {
+    pub fn new(room_id: String, host_id: u32, app_id: u32, app_name: String) -> Self {
+        Self {
+            room_id,
+            host_id,
+            app_id,
+            app_name,
+            max_players: PlayerSlot::MAX_PLAYERS as u8,
+            clients: HashMap::new(),
+            ipc_sender: None,
+            occupied_slots: [false; PlayerSlot::MAX_PLAYERS],
+            guests_keyboard_mouse_enabled: false, // Default: guests cannot use KB/mouse
+        }
+    }
+
+    /// Set whether guests can use keyboard/mouse and notify the streamer
+    pub async fn set_guests_keyboard_mouse_enabled(&mut self, enabled: bool) {
+        self.guests_keyboard_mouse_enabled = enabled;
+
+        // Notify the streamer
+        if let Some(ref ipc_sender) = self.ipc_sender {
+            ipc_sender
+                .send(common::ipc::ServerIpcMessage::SetGuestsKeyboardMouseEnabled { enabled })
+                .await;
+        }
+    }
+
+    pub fn to_room_info(&self) -> RoomInfo {
+        RoomInfo {
+            room_id: self.room_id.clone(),
+            host_id: self.host_id,
+            app_id: self.app_id,
+            app_name: self.app_name.clone(),
+            players: self.clients.values().map(|c| c.to_room_player()).collect(),
+            max_players: self.max_players,
+        }
+    }
+
+    /// Get the next available player slot
+    pub fn next_available_slot(&self) -> Option<PlayerSlot> {
+        for (i, occupied) in self.occupied_slots.iter().enumerate() {
+            if !occupied {
+                return Some(PlayerSlot(i as u8));
+            }
+        }
+        None
+    }
+
+    /// Add a client to the room
+    pub fn add_client(&mut self, client: RoomClient) -> bool {
+        let slot = client.player_slot.0 as usize;
+        if slot >= PlayerSlot::MAX_PLAYERS || self.occupied_slots[slot] {
+            return false;
+        }
+
+        self.occupied_slots[slot] = true;
+        self.clients.insert(client.peer_id, client);
+        true
+    }
+
+    /// Remove a client from the room
+    pub fn remove_client(&mut self, peer_id: PeerId) -> Option<RoomClient> {
+        if let Some(client) = self.clients.remove(&peer_id) {
+            let slot = client.player_slot.0 as usize;
+            if slot < PlayerSlot::MAX_PLAYERS {
+                self.occupied_slots[slot] = false;
+            }
+            Some(client)
+        } else {
+            None
+        }
+    }
+
+    /// Check if the room is empty
+    pub fn is_empty(&self) -> bool {
+        self.clients.is_empty()
+    }
+
+    /// Check if the host is still connected
+    pub fn has_host(&self) -> bool {
+        self.clients
+            .values()
+            .any(|c| c.player_slot.is_host())
+    }
+
+    /// Get a client by peer ID
+    pub fn get_client(&self, peer_id: PeerId) -> Option<&RoomClient> {
+        self.clients.get(&peer_id)
+    }
+
+    /// Get a mutable client by peer ID
+    pub fn get_client_mut(&mut self, peer_id: PeerId) -> Option<&mut RoomClient> {
+        self.clients.get_mut(&peer_id)
+    }
+
+    /// Broadcast a message to all clients
+    pub async fn broadcast(&self, message: StreamServerMessage) {
+        let Some(json) = serialize_json(&message) else {
+            return;
+        };
+
+        for client in self.clients.values() {
+            let mut session = client.session.clone();
+            if let Err(err) = session.text(json.clone()).await {
+                warn!(
+                    "Failed to send message to peer {:?}: {:?}",
+                    client.peer_id, err
+                );
+            }
+        }
+    }
+
+    /// Send a message to a specific peer
+    pub async fn send_to_peer(&self, peer_id: PeerId, message: StreamServerMessage) {
+        let Some(json) = serialize_json(&message) else {
+            return;
+        };
+
+        if let Some(client) = self.clients.get(&peer_id) {
+            let mut session = client.session.clone();
+            if let Err(err) = session.text(json).await {
+                warn!(
+                    "Failed to send message to peer {:?}: {:?}",
+                    peer_id, err
+                );
+            }
+        }
+    }
+}
+
+/// Manager for all active rooms
+pub struct RoomManager {
+    /// Active rooms indexed by room_id
+    rooms: RwLock<HashMap<String, Arc<Mutex<Room>>>>,
+    /// Map peer_id to room_id for quick lookup
+    peer_to_room: RwLock<HashMap<PeerId, String>>,
+}
+
+impl RoomManager {
+    pub fn new() -> Self {
+        Self {
+            rooms: RwLock::new(HashMap::new()),
+            peer_to_room: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Create a new room and return it
+    pub async fn create_room(
+        &self,
+        host_id: u32,
+        app_id: u32,
+        app_name: String,
+    ) -> Arc<Mutex<Room>> {
+        let room_id = generate_room_id();
+        let room = Arc::new(Mutex::new(Room::new(
+            room_id.clone(),
+            host_id,
+            app_id,
+            app_name,
+        )));
+
+        let mut rooms = self.rooms.write().await;
+        rooms.insert(room_id.clone(), room.clone());
+
+        info!("Created room {}", room_id);
+        room
+    }
+
+    /// Get a room by ID
+    pub async fn get_room(&self, room_id: &str) -> Option<Arc<Mutex<Room>>> {
+        let rooms = self.rooms.read().await;
+        rooms.get(room_id).cloned()
+    }
+
+    /// Register a peer with a room
+    pub async fn register_peer(&self, peer_id: PeerId, room_id: &str) {
+        let mut peer_to_room = self.peer_to_room.write().await;
+        peer_to_room.insert(peer_id, room_id.to_string());
+    }
+
+    /// Get the room a peer belongs to
+    pub async fn get_peer_room(&self, peer_id: PeerId) -> Option<Arc<Mutex<Room>>> {
+        let peer_to_room = self.peer_to_room.read().await;
+        if let Some(room_id) = peer_to_room.get(&peer_id) {
+            let rooms = self.rooms.read().await;
+            rooms.get(room_id).cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Remove a peer from their room
+    pub async fn remove_peer(&self, peer_id: PeerId) -> Option<(Arc<Mutex<Room>>, RoomClient)> {
+        let room_id = {
+            let mut peer_to_room = self.peer_to_room.write().await;
+            peer_to_room.remove(&peer_id)
+        };
+
+        if let Some(room_id) = room_id {
+            let rooms = self.rooms.read().await;
+            if let Some(room) = rooms.get(&room_id) {
+                let mut room_guard = room.lock().await;
+                if let Some(client) = room_guard.remove_client(peer_id) {
+                    debug!("Removed peer {:?} from room {}", peer_id, room_id);
+                    return Some((room.clone(), client));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Delete a room
+    pub async fn delete_room(&self, room_id: &str) {
+        let mut rooms = self.rooms.write().await;
+        if rooms.remove(room_id).is_some() {
+            info!("Deleted room {}", room_id);
+        }
+
+        // Clean up peer mappings
+        let mut peer_to_room = self.peer_to_room.write().await;
+        peer_to_room.retain(|_, rid| rid != room_id);
+    }
+
+    /// Generate a new unique peer ID
+    pub fn generate_peer_id(&self) -> PeerId {
+        generate_peer_id()
+    }
+
+    /// List all active rooms (for admin/debugging)
+    pub async fn list_rooms(&self) -> Vec<RoomInfo> {
+        let rooms = self.rooms.read().await;
+        let mut result = Vec::new();
+
+        for room in rooms.values() {
+            let room_guard = room.lock().await;
+            result.push(room_guard.to_room_info());
+        }
+
+        result
+    }
+}
+
+impl Default for RoomManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
