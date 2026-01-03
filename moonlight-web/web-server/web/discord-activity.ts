@@ -100,7 +100,7 @@ async function initializeDiscord(): Promise<void> {
         } else {
             // Development mode - use mock SDK
             console.warn("Not in Discord Activity, using mock SDK for development");
-            discordSdk = new DiscordSDKMock(DISCORD_CLIENT_ID, "guild_id", "channel_id");
+            discordSdk = new DiscordSDKMock(DISCORD_CLIENT_ID, "guild_id", "channel_id", "user_id");
         }
 
         // Get activity instance info
@@ -359,9 +359,9 @@ function initializeWebRTC(): void {
                 WebRtc: {
                     AddIceCandidate: {
                         candidate: event.candidate.candidate,
-                        sdp_mid: event.candidate.sdpMid ?? undefined,
-                        sdp_mline_index: event.candidate.sdpMLineIndex ?? undefined,
-                        username_fragment: event.candidate.usernameFragment ?? undefined,
+                        sdp_mid: event.candidate.sdpMid ?? null,
+                        sdp_mline_index: event.candidate.sdpMLineIndex ?? null,
+                        username_fragment: event.candidate.usernameFragment ?? null,
                     },
                 },
             });
@@ -389,14 +389,14 @@ async function handleWebRtcSignaling(signaling: any): Promise<void> {
             sdp: desc.sdp,
         });
 
-        if (desc.ty === "Offer") {
+        if (desc.ty === "offer") {
             const answer = await state.peerConnection.createAnswer();
             await state.peerConnection.setLocalDescription(answer);
 
             sendWsMessage({
                 WebRtc: {
                     Description: {
-                        ty: "Answer",
+                        ty: "answer",
                         sdp: answer.sdp!,
                     },
                 },
@@ -434,8 +434,7 @@ function disableInput(): void {
 function requestPlayerSlot(): void {
     if (!state.ws || state.role !== "Spectator") return;
 
-    const message: StreamClientMessage = { RequestPlayerSlot: null };
-    sendWsMessage(message);
+    sendWsMessage("RequestPlayerSlot");
 }
 
 /**
@@ -444,8 +443,7 @@ function requestPlayerSlot(): void {
 function releasePlayerSlot(): void {
     if (!state.ws || state.role === "Spectator") return;
 
-    const message: StreamClientMessage = { ReleasePlayerSlot: null };
-    sendWsMessage(message);
+    sendWsMessage("ReleasePlayerSlot");
 }
 
 /**
