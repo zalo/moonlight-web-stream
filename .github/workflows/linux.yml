@@ -58,12 +58,16 @@ jobs:
        mv dist static
        popd
 
+       mv target/release/streamer streamer
+       mv target/release/web-server web-server
+       mv moonlight-web/web-server/static static
+
 
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
         name: moonlight-web-${{ matrix.arch.name }}-unknown-linux-gnu
         path: |
-          target/release/streamer
-          target/release/web-server
-          moonlight-web/web-server/static
+          streamer.exe
+          web-server.exe
+          static
