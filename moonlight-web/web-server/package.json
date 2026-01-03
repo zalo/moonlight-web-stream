@@ -25,7 +25,7 @@
   "private": "true",
   "devDependencies": {
     "@discord/embedded-app-sdk": "^2.4.0",
-    "cpx": "1.2.1",
+    "cpx2": "^8.0.0",
     "npm-watch": "0.13.0",
     "typescript": "5.9.3"
   }
