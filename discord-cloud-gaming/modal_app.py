@@ -81,13 +81,11 @@ image = (
         "echo 'source $HOME/.cargo/env' >> ~/.bashrc",
     )
     .env({"PATH": "/root/.cargo/bin:$PATH"})
-    # Install Sunshine
+    # Install Sunshine from GitHub releases
     .run_commands(
-        # Add Sunshine repository
-        "wget -qO- https://dl.cloudsmith.io/public/lizardbyte/stable/gpg.50D6C9FF7F0F30A0.key | gpg --dearmor -o /usr/share/keyrings/lizardbyte-stable.gpg",
-        "echo 'deb [signed-by=/usr/share/keyrings/lizardbyte-stable.gpg] https://dl.cloudsmith.io/public/lizardbyte/stable/deb/ubuntu jammy main' > /etc/apt/sources.list.d/lizardbyte-stable.list",
-        "apt-get update",
-        "apt-get install -y sunshine || echo 'Sunshine install attempted'",
+        "wget -q https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-ubuntu-22.04-amd64.deb -O /tmp/sunshine.deb",
+        "apt-get install -y /tmp/sunshine.deb || echo 'Sunshine install attempted'",
+        "rm /tmp/sunshine.deb",
     )
     # Copy the moonlight-web-stream source
     .add_local_dir(
