@@ -97,6 +97,7 @@ impl RoomClient {
         self.role.is_spectator()
     }
 
+    #[allow(dead_code)]
     pub fn is_player(&self) -> bool {
         self.role.can_input()
     }
@@ -171,6 +172,7 @@ impl Room {
     }
 
     /// Count the number of players (non-spectators)
+    #[allow(dead_code)]
     pub fn player_count(&self) -> usize {
         self.clients.values().filter(|c| c.is_player()).count()
     }
@@ -202,6 +204,7 @@ impl Room {
     }
 
     /// Add a spectator to the room
+    #[allow(dead_code)]
     pub fn add_spectator(&mut self, client: RoomClient) -> bool {
         // Spectators should not have a player slot
         if client.player_slot.is_some() || !client.is_spectator() {
@@ -228,6 +231,7 @@ impl Room {
     }
 
     /// Promote a spectator to player
+    #[allow(dead_code)]
     pub fn promote_to_player(&mut self, peer_id: PeerId) -> Option<PlayerSlot> {
         // Get next available slot
         let slot = self.next_available_slot()?;
@@ -246,6 +250,7 @@ impl Room {
     }
 
     /// Demote a player to spectator
+    #[allow(dead_code)]
     pub fn demote_to_spectator(&mut self, peer_id: PeerId) -> bool {
         let client = self.clients.get_mut(&peer_id);
         let Some(client) = client else {
@@ -270,6 +275,7 @@ impl Room {
     }
 
     /// Find a client by Discord user ID
+    #[allow(dead_code)]
     pub fn find_by_discord_id(&self, discord_user_id: &str) -> Option<PeerId> {
         self.clients
             .iter()

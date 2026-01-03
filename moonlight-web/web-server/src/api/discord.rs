@@ -45,6 +45,7 @@ impl DiscordInstanceManager {
     }
 
     /// Remove a Discord Activity instance mapping
+    #[allow(dead_code)]
     pub async fn remove_instance(&self, instance_id: &str) {
         let mut instances = self.instances.write().await;
         if instances.remove(instance_id).is_some() {
@@ -53,6 +54,7 @@ impl DiscordInstanceManager {
     }
 
     /// Remove all instances pointing to a room (when room is closed)
+    #[allow(dead_code)]
     pub async fn remove_room(&self, room_id: &str) {
         let mut instances = self.instances.write().await;
         instances.retain(|_, rid| rid != room_id);
@@ -67,6 +69,7 @@ impl Default for DiscordInstanceManager {
 
 /// Response from Discord's OAuth2 token endpoint
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct DiscordTokenResponse {
     access_token: String,
     token_type: String,
@@ -77,6 +80,7 @@ struct DiscordTokenResponse {
 
 /// Error response from Discord API
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct DiscordErrorResponse {
     error: String,
     error_description: Option<String>,
