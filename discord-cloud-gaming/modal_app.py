@@ -389,7 +389,41 @@ def cloud_gaming_server():
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
-    # Run web server
+    # Debug: verify setup before starting
+    print("=== Pre-flight checks ===")
+    print(f"Config written to: {config_path}")
+    print(f"Working directory: /app")
+
+    # Check static directory
+    import os.path
+    if os.path.isdir("/app/static"):
+        static_files = os.listdir("/app/static")
+        print(f"Static directory exists with {len(static_files)} items")
+        if "index.html" in static_files:
+            print("✓ index.html found")
+        else:
+            print("✗ index.html NOT found!")
+    else:
+        print("✗ Static directory /app/static does NOT exist!")
+
+    # Check web-server binary
+    if os.path.isfile("/app/web-server"):
+        print("✓ web-server binary exists")
+    else:
+        print("✗ web-server binary NOT found!")
+
+    # Check streamer binary
+    if os.path.isfile("/app/streamer"):
+        print("✓ streamer binary exists")
+    else:
+        print("✗ streamer binary NOT found!")
+
+    print("=== Starting web server ===")
+    print(f"Command: /app/web-server --config-path {config_path}")
+
+    # Run web server with more verbose logging
+    env["RUST_LOG"] = "debug,actix_web=info,actix_server=info"
+
     subprocess.run(
         ["/app/web-server", "--config-path", config_path],
         env=env,
